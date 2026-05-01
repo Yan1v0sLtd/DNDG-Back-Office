@@ -20,8 +20,8 @@ When asked to add a feature, ask first: *can this be expressed as a coefficient 
 | ----- | ----- | ------ |
 | 1 | Auth, env-scoped config tables seeded from GDD, Heroes CRUD with live MS + Balance Power | ✅ Done |
 | 2 | Cards CRUD with effects + Card Power | ✅ Done |
-| 3 | Deck builder (5 role + 5 general) + hero Balance Power aggregation including deck | ⏳ Next |
-| 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ⏳ |
+| 3 | Deck builder (5 role + 5 general) + hero Balance Power aggregation including deck | ✅ Done |
+| 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ⏳ Next |
 | 5 | Pairwise simulator + nightly balance report | ⏳ |
 
 Don't start Phase 4 until ≥5 heroes with full decks are in dev. Don't start Phase 5 until ≥10. Without that, budget ranges and matchup expectations are uncalibrated.
@@ -54,7 +54,7 @@ Both scores read the same `stat_weights` table; only the column differs. If you 
 src/
 ├── lib/
 │   ├── ms-calculator.ts            → GDD Mastery Score. Pure functions. No React, no Supabase.
-│   ├── balance-power-calculator.ts → Hero internal score. Will fold in deck Card Power in Phase 3.
+│   ├── balance-power-calculator.ts → Hero internal score (stats + deck) and deck-contribution helper.
 │   ├── card-power-calculator.ts    → Card internal score from effects, cooldown, tier.
 │   ├── useConfigBundle.ts          → Hook: fetches all config for current env. Pages use this.
 │   └── supabase.ts                 → Client only. No queries here.
@@ -64,7 +64,8 @@ src/
 ├── components/
 │   ├── UI.tsx                      → Primitives: Button, Panel, Field, Input, Score, Badge,
 │   │                                  PageHeader, Empty. Add new primitives here.
-│   └── Layout.tsx                  → Sidebar nav + env switcher. Phase nav stubs as placeholders.
+│   ├── Layout.tsx                  → Sidebar nav + env switcher. Phase nav stubs as placeholders.
+│   └── DeckPanel.tsx               → Phase 3: 10 slots, role-filtered picker, per-slot card power.
 ├── pages/
 │   ├── Login.tsx
 │   ├── HeroesList.tsx
@@ -113,6 +114,11 @@ effect_power     = pp_weight × magnitude × max(duration_sec, 1) × target_coun
 total_effect_pwr = Σ effect_power
 cooldown_factor  = 10 / (cooldown_sec + 1)
 card_power       = total_effect_pwr × cooldown_factor × tier_multiplier
+
+# Hero Balance Power including deck (Phase 3)
+deck_contribution = Σ card_power for each card in the hero's deck (slots 1–10)
+hero_bp_total     = stat_bp + deck_contribution
+# (Raw additive — Phase 5 simulator will reweight with usage frequency.)
 ```
 
 If a designer asks to change these: the change is almost always in the coefficients/weights tables, not in TS code. Touch the formulas only when adding genuinely new mechanics (e.g., stat interaction terms, deck Card Power in Phase 3).

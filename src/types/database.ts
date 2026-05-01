@@ -129,3 +129,22 @@ export interface CardEffect {
   target_count: number;
   position: number;
 }
+
+// ─── Phase 3 — Decks ────────────────────────────────────────────────────────
+
+// Slots 1..5 are role-specific (must match hero's combat_role); slots 6..10
+// are general. Convention enforced in app code, not in the database.
+export interface HeroDeckEntry {
+  id: string;
+  hero_id: string;
+  card_id: string;
+  slot: number;
+}
+
+export const ROLE_SPECIFIC_SLOTS = [1, 2, 3, 4, 5] as const;
+export const GENERAL_SLOTS = [6, 7, 8, 9, 10] as const;
+export const ALL_SLOTS = [...ROLE_SPECIFIC_SLOTS, ...GENERAL_SLOTS] as const;
+
+export function slotKind(slot: number): CardKind {
+  return slot <= 5 ? 'role_specific' : 'general';
+}

@@ -21,7 +21,7 @@ export function Layout() {
           <Section label="Content">
             <NavItem to="/heroes">Heroes</NavItem>
             <NavItem to="/cards">Cards</NavItem>
-            <NavItem to="/decks" disabled>Decks <Badge>Phase 3</Badge></NavItem>
+            {/* Decks are edited inline on the hero — no standalone /decks page yet. */}
           </Section>
 
           <Section label="Balance">

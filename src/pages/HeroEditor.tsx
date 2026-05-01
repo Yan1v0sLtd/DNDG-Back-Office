@@ -5,7 +5,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { useConfigBundle } from '@/lib/useConfigBundle';
 import { deriveStats, masteryScore } from '@/lib/ms-calculator';
-import { balancePowerFromStats } from '@/lib/balance-power-calculator';
+import {
+  balancePowerFromStats,
+  deckContribution,
+} from '@/lib/balance-power-calculator';
 import {
   Badge,
   Button,
@@ -16,7 +19,17 @@ import {
   Panel,
   Score,
 } from '@/components/UI';
-import type { Attribute, Hero, HeroAttributes, HeroStatus } from '@/types/database';
+import { DeckPanel } from '@/components/DeckPanel';
+import {
+  ALL_SLOTS,
+  type Attribute,
+  type Card,
+  type CardEffect,
+  type Hero,
+  type HeroAttributes,
+  type HeroDeckEntry,
+  type HeroStatus,
+} from '@/types/database';
 
 interface Form {
   name: string;
@@ -44,6 +57,12 @@ const empty = (combat_role_id: string): Form => ({
   resilience: 0,
 });
 
+const emptyDeck = (): Map<number, string | null> => {
+  const m = new Map<number, string | null>();
+  ALL_SLOTS.forEach((s) => m.set(s, null));
+  return m;
+};
+
 export function HeroEditor() {
   const { id } = useParams<{ id: string }>();
   const isNew = !id || id === 'new';
@@ -53,42 +72,80 @@ export function HeroEditor() {
   const navigate = useNavigate();
 
   const [form, setForm] = useState<Form | null>(null);
+  const [deck, setDeck] = useState<Map<number, string | null>>(emptyDeck());
+  const [cards, setCards] = useState<Card[]>([]);
+  const [effectsByCard, setEffectsByCard] = useState<Map<string, CardEffect[]>>(new Map());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize form once config + (optional) hero are loaded.
+  // Fetch cards + effects for the env (picker pool + power computation).
+  useEffect(() => {
+    if (!currentEnv) return;
+    let cancelled = false;
+    (async () => {
+      const { data: cardRows } = await supabase
+        .from('cards')
+        .select('*')
+        .eq('env_id', currentEnv.id)
+        .order('name');
+      const ids = (cardRows ?? []).map((c) => c.id);
+      const { data: effRows } =
+        ids.length > 0
+          ? await supabase.from('card_effects').select('*').in('card_id', ids)
+          : { data: [] as CardEffect[] };
+      if (cancelled) return;
+      setCards((cardRows ?? []) as Card[]);
+      const map = new Map<string, CardEffect[]>();
+      (effRows ?? []).forEach((e) => {
+        const arr = map.get(e.card_id) ?? [];
+        arr.push(e);
+        map.set(e.card_id, arr);
+      });
+      setEffectsByCard(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentEnv?.id]);
+
+  // Initialize hero form + deck once config + (optional) hero are loaded.
   useEffect(() => {
     if (!currentEnv || !bundle) return;
     if (isNew) {
       setForm(empty(bundle.combatRoles[0]?.id ?? ''));
+      setDeck(emptyDeck());
       return;
     }
     let cancelled = false;
-    supabase
-      .from('heroes')
-      .select('*')
-      .eq('id', id)
-      .single()
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (error || !data) {
-          setError(error?.message ?? 'Hero not found');
-          return;
-        }
-        const h = data as Hero;
-        setForm({
-          name: h.name,
-          race: h.race ?? '',
-          combat_role_id: h.combat_role_id,
-          description: h.description ?? '',
-          status: h.status,
-          vitality: h.vitality,
-          might: h.might,
-          range: h.range,
-          haste: h.haste,
-          resilience: h.resilience,
-        });
+    (async () => {
+      const [heroRes, deckRes] = await Promise.all([
+        supabase.from('heroes').select('*').eq('id', id).single(),
+        supabase.from('hero_decks').select('*').eq('hero_id', id),
+      ]);
+      if (cancelled) return;
+      if (heroRes.error || !heroRes.data) {
+        setError(heroRes.error?.message ?? 'Hero not found');
+        return;
+      }
+      const h = heroRes.data as Hero;
+      setForm({
+        name: h.name,
+        race: h.race ?? '',
+        combat_role_id: h.combat_role_id,
+        description: h.description ?? '',
+        status: h.status,
+        vitality: h.vitality,
+        might: h.might,
+        range: h.range,
+        haste: h.haste,
+        resilience: h.resilience,
       });
+      const d = emptyDeck();
+      ((deckRes.data ?? []) as HeroDeckEntry[]).forEach((row) => {
+        d.set(row.slot, row.card_id);
+      });
+      setDeck(d);
+    })();
     return () => {
       cancelled = true;
     };
@@ -107,7 +164,24 @@ export function HeroEditor() {
   }, [form, bundle]);
 
   const ms = stats && bundle ? masteryScore(stats, bundle.statWeights) : null;
-  const bp = stats && bundle ? balancePowerFromStats(stats, bundle.statWeights) : null;
+  const bpStats = stats && bundle ? balancePowerFromStats(stats, bundle.statWeights) : null;
+
+  const deckCards = useMemo(() => {
+    const ids: string[] = [];
+    deck.forEach((id) => {
+      if (id) ids.push(id);
+    });
+    return ids
+      .map((id) => cards.find((c) => c.id === id))
+      .filter((c): c is Card => Boolean(c));
+  }, [deck, cards]);
+
+  const deckContrib = useMemo(() => {
+    if (!bundle) return null;
+    return deckContribution(deckCards, effectsByCard, bundle.cardTiers, bundle.effectTypes);
+  }, [deckCards, effectsByCard, bundle]);
+
+  const bpTotal = bpStats != null && deckContrib ? bpStats + deckContrib.total : bpStats;
 
   const masteryRank = useMemo(() => {
     if (ms == null || !bundle) return null;
@@ -126,16 +200,40 @@ export function HeroEditor() {
     if (!writable) return;
     setSaving(true);
     setError(null);
+
     const payload = { ...form, env_id: currentEnv.id };
-    const result = isNew
+    const heroRes = isNew
       ? await supabase.from('heroes').insert(payload).select('id').single()
       : await supabase.from('heroes').update(payload).eq('id', id!).select('id').single();
-    setSaving(false);
-    if (result.error) {
-      setError(result.error.message);
+    if (heroRes.error || !heroRes.data) {
+      setSaving(false);
+      setError(heroRes.error?.message ?? 'Save failed');
       return;
     }
-    navigate(`/heroes/${result.data.id}`);
+    const heroId = heroRes.data.id as string;
+
+    // Save deck: delete-all-and-reinsert (matches the card_effects pattern).
+    const del = await supabase.from('hero_decks').delete().eq('hero_id', heroId);
+    if (del.error) {
+      setSaving(false);
+      setError(del.error.message);
+      return;
+    }
+    const rows: { hero_id: string; card_id: string; slot: number }[] = [];
+    deck.forEach((cardId, slot) => {
+      if (cardId) rows.push({ hero_id: heroId, card_id: cardId, slot });
+    });
+    if (rows.length > 0) {
+      const ins = await supabase.from('hero_decks').insert(rows);
+      if (ins.error) {
+        setSaving(false);
+        setError(ins.error.message);
+        return;
+      }
+    }
+
+    setSaving(false);
+    navigate(`/heroes/${heroId}`);
   };
 
   const onDelete = async () => {
@@ -147,6 +245,16 @@ export function HeroEditor() {
       return;
     }
     navigate('/heroes');
+  };
+
+  // Clear deck slots if combat role changes — role-specific cards no longer match.
+  const onChangeRole = (newRoleId: string) => {
+    if (newRoleId !== form.combat_role_id) {
+      const next = new Map(deck);
+      [1, 2, 3, 4, 5].forEach((s) => next.set(s, null));
+      setDeck(next);
+    }
+    setForm({ ...form, combat_role_id: newRoleId });
   };
 
   return (
@@ -191,7 +299,7 @@ export function HeroEditor() {
                 <select
                   className="w-full bg-ink border border-line rounded-md px-3 py-2 text-sm"
                   value={form.combat_role_id}
-                  onChange={(e) => setForm({ ...form, combat_role_id: e.target.value })}
+                  onChange={(e) => onChangeRole(e.target.value)}
                   disabled={!writable}
                 >
                   {bundle?.combatRoles.map((r) => (
@@ -239,9 +347,22 @@ export function HeroEditor() {
               ))}
             </div>
           </Panel>
+
+          {bundle && (
+            <DeckPanel
+              combatRoleId={form.combat_role_id}
+              cards={cards}
+              effectsByCard={effectsByCard}
+              tiers={bundle.cardTiers}
+              effectTypes={bundle.effectTypes}
+              value={deck}
+              onChange={setDeck}
+              writable={writable}
+            />
+          )}
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-4 xl:sticky xl:top-4 self-start">
           <Panel title="Computed">
             <div className="grid grid-cols-2 gap-2">
               <Score label="HP" value={stats?.hp ?? '—'} />
@@ -260,12 +381,46 @@ export function HeroEditor() {
               />
               <Score
                 label="Balance Power"
-                value={bp ?? '—'}
+                value={bpTotal ?? '—'}
                 emphasis="bp"
-                hint="Internal · sim & budgets"
+                hint={
+                  deckContrib
+                    ? `Stats ${bpStats} + Deck ${deckContrib.total}`
+                    : 'Internal · sim & budgets'
+                }
               />
             </div>
           </Panel>
+
+          {deckContrib && deckCards.length > 0 && (
+            <Panel title="Deck breakdown">
+              <table className="w-full text-xs">
+                <thead className="text-muted">
+                  <tr>
+                    <th className="text-left py-1">Card</th>
+                    <th className="text-right py-1">Power</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deckContrib.perCard.map(({ cardId, power }) => {
+                    const c = cards.find((x) => x.id === cardId);
+                    return (
+                      <tr key={cardId} className="border-t border-line">
+                        <td className="py-1.5">{c?.name ?? '—'}</td>
+                        <td className="py-1.5 text-right text-cyan-400 font-medium">{power}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="border-t-2 border-line">
+                    <td className="py-1.5 font-semibold">Total</td>
+                    <td className="py-1.5 text-right text-cyan-400 font-semibold">
+                      {deckContrib.total}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </Panel>
+          )}
 
           {error && (
             <Panel title="Error">
