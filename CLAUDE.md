@@ -22,7 +22,8 @@ When asked to add a feature, ask first: *can this be expressed as a coefficient 
 | 2 | Cards CRUD with effects + Card Power | ✅ Done |
 | 3 | Deck builder (5 role + 5 general) + hero Balance Power aggregation including deck | ✅ Done |
 | 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ✅ Done |
-| 5 | Pairwise simulator + nightly balance report | ⏳ Next |
+| 5 | Pairwise simulator (v1: no positioning / no multi-target / no storage) | ✅ Done |
+| 5b | Simulator polish: positioning model, AoE handling, run history, batch sweep, BP recalibration from win-rate data | ⏳ Next |
 
 Don't start Phase 4 until ≥5 heroes with full decks are in dev. Don't start Phase 5 until ≥10. Without that, budget ranges and matchup expectations are uncalibrated.
 
@@ -57,6 +58,7 @@ src/
 │   ├── balance-power-calculator.ts → Hero internal score (stats + deck) and deck-contribution helper.
 │   ├── card-power-calculator.ts    → Card internal score from effects, cooldown, tier.
 │   ├── budget.ts                   → Budget verdict (ok/too_low/too_high/no_budget) + tone helper.
+│   ├── simulator.ts                → Phase 5: pairwise combat sim (tick loop, AI, effects, batch).
 │   ├── useConfigBundle.ts          → Hook: fetches all config for current env. Pages use this.
 │   └── supabase.ts                 → Client only. No queries here.
 ├── contexts/
@@ -73,6 +75,7 @@ src/
 │   ├── HeroEditor.tsx              → Live MS + BP recompute as designer edits attributes.
 │   ├── CardsList.tsx
 │   ├── CardEditor.tsx              → Live Card Power recompute; effects sub-editor (add/edit/remove).
+│   ├── Simulator.tsx               → Phase 5: pick A vs B, run N Monte Carlo, see win-rate verdict.
 │   └── admin/
 │       ├── Coefficients.tsx        → Admin-only: edit attribute coefficients + stat weights.
 │       └── Budgets.tsx              → Admin-only: BP envelope per (role × rank). Filter-by-role.
@@ -120,8 +123,33 @@ card_power       = total_effect_pwr × cooldown_factor × tier_multiplier
 # Hero Balance Power including deck (Phase 3)
 deck_contribution = Σ card_power for each card in the hero's deck (slots 1–10)
 hero_bp_total     = stat_bp + deck_contribution
-# (Raw additive — Phase 5 simulator will reweight with usage frequency.)
+# (Raw additive — Phase 5b will reweight using simulator win-rate data.)
 ```
+
+## Simulator v1 — what it models, what it ignores
+
+The simulator (`lib/simulator.ts`) runs hero+deck pairs through a discrete-time
+combat loop (0.5s tick, 30s max). For each tick it picks the best applicable
+off-cooldown card per side (highest static power), falls back to a 1.0s
+basic attack, and resolves effects with evasion / resilience rolls.
+
+**Modeled:** HP/DMG/eva%/res%, cooldowns, DoTs, shields, heals, stuns,
+buffs (might/haste/resilience), evasion debuffs.
+
+**Not modeled in v1 (intentional, ship v1 first):**
+- **Positioning** — Range stat is ignored. Every fight is in melee. Ranged
+  heroes (Anaitis, Tayfan) will look weaker here than in real PvP. Add a
+  closing-distance model in v2.
+- **Multi-target** — `target_count > 1` collapses to 1 (no second target
+  exists in 1v1). AoE cards therefore appear under-powered, which is
+  itself a useful signal — don't "fix" it by inflating their pp_weight.
+- **Movement, kiting, line-of-sight, knockback, slow** — all silent no-ops
+  (resilience still rolls for slow/eva-debuff so designers see the effect
+  on resilience scoring).
+- **Run storage** — results are page-only. Add a `simulations` table when
+  designers need history.
+
+Verdict: 45–55% win rate = "balanced". Anything outside flips the verdict.
 
 If a designer asks to change these: the change is almost always in the coefficients/weights tables, not in TS code. Touch the formulas only when adding genuinely new mechanics (e.g., stat interaction terms, deck Card Power in Phase 3).
 

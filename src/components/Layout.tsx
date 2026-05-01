@@ -25,7 +25,7 @@ export function Layout() {
           </Section>
 
           <Section label="Balance">
-            <NavItem to="/simulator" disabled>Simulator <Badge>Phase 5</Badge></NavItem>
+            <NavItem to="/simulator">Simulator</NavItem>
           </Section>
 
           {canWriteConfig() && (
