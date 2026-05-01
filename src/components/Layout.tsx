@@ -20,8 +20,7 @@ export function Layout() {
         <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
           <Section label="Content">
             <NavItem to="/heroes">Heroes</NavItem>
-            {/* Phase 2+ surfaces below appear as they're built */}
-            <NavItem to="/cards" disabled>Cards <Badge>Phase 2</Badge></NavItem>
+            <NavItem to="/cards">Cards</NavItem>
             <NavItem to="/decks" disabled>Decks <Badge>Phase 3</Badge></NavItem>
           </Section>
 

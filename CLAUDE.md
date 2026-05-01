@@ -19,8 +19,8 @@ When asked to add a feature, ask first: *can this be expressed as a coefficient 
 | Phase | Scope | Status |
 | ----- | ----- | ------ |
 | 1 | Auth, env-scoped config tables seeded from GDD, Heroes CRUD with live MS + Balance Power | ✅ Done |
-| 2 | Cards CRUD with effects + Card Power | ⏳ Next |
-| 3 | Deck builder (5 role + 5 general) + hero Balance Power aggregation including deck | ⏳ |
+| 2 | Cards CRUD with effects + Card Power | ✅ Done |
+| 3 | Deck builder (5 role + 5 general) + hero Balance Power aggregation including deck | ⏳ Next |
 | 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ⏳ |
 | 5 | Pairwise simulator + nightly balance report | ⏳ |
 
@@ -54,7 +54,8 @@ Both scores read the same `stat_weights` table; only the column differs. If you 
 src/
 ├── lib/
 │   ├── ms-calculator.ts            → GDD Mastery Score. Pure functions. No React, no Supabase.
-│   ├── balance-power-calculator.ts → Internal score. Will fold in Card Power in Phase 3.
+│   ├── balance-power-calculator.ts → Hero internal score. Will fold in deck Card Power in Phase 3.
+│   ├── card-power-calculator.ts    → Card internal score from effects, cooldown, tier.
 │   ├── useConfigBundle.ts          → Hook: fetches all config for current env. Pages use this.
 │   └── supabase.ts                 → Client only. No queries here.
 ├── contexts/
@@ -68,6 +69,8 @@ src/
 │   ├── Login.tsx
 │   ├── HeroesList.tsx
 │   ├── HeroEditor.tsx              → Live MS + BP recompute as designer edits attributes.
+│   ├── CardsList.tsx
+│   ├── CardEditor.tsx              → Live Card Power recompute; effects sub-editor (add/edit/remove).
 │   └── admin/
 │       └── Coefficients.tsx        → Admin-only: edit attribute coefficients + stat weights.
 └── types/database.ts               → Domain types matching the Supabase schema. Keep in sync with migrations.
@@ -103,7 +106,13 @@ resilience_pct= resilience    × stat_per_point[resilience]    (2 by GDD)
 range         = range         × stat_per_point[range]         (1 by GDD)
 
 mastery_score  = Σ stat_value × ms_weight[stat]               (range ms_weight = 0)
-balance_power  = Σ stat_value × bp_weight[stat]               (range bp_weight tunable; phase-1 placeholder = 5)
+balance_power  = Σ stat_value × bp_weight[stat]               (range bp_weight tunable; placeholder = 5)
+
+# Card Power (Phase 2)
+effect_power     = pp_weight × magnitude × max(duration_sec, 1) × target_count
+total_effect_pwr = Σ effect_power
+cooldown_factor  = 10 / (cooldown_sec + 1)
+card_power       = total_effect_pwr × cooldown_factor × tier_multiplier
 ```
 
 If a designer asks to change these: the change is almost always in the coefficients/weights tables, not in TS code. Touch the formulas only when adding genuinely new mechanics (e.g., stat interaction terms, deck Card Power in Phase 3).

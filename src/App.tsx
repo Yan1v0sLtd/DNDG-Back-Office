@@ -5,6 +5,8 @@ import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
 import { HeroesList } from '@/pages/HeroesList';
 import { HeroEditor } from '@/pages/HeroEditor';
+import { CardsList } from '@/pages/CardsList';
+import { CardEditor } from '@/pages/CardEditor';
 import { CoefficientsAdmin } from '@/pages/admin/Coefficients';
 
 export function App() {
@@ -19,6 +21,8 @@ export function App() {
                 <Route index element={<Navigate to="/heroes" replace />} />
                 <Route path="/heroes" element={<HeroesList />} />
                 <Route path="/heroes/:id" element={<HeroEditor />} />
+                <Route path="/cards" element={<CardsList />} />
+                <Route path="/cards/:id" element={<CardEditor />} />
                 <Route path="/admin/coefficients" element={<CoefficientsAdmin />} />
                 <Route path="*" element={<Navigate to="/heroes" replace />} />
               </Route>

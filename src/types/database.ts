@@ -76,3 +76,56 @@ export interface CombatStats {
   resilience_pct: number;
   range: number;
 }
+
+// ─── Phase 2 — Cards ────────────────────────────────────────────────────────
+
+export type CardKind = 'role_specific' | 'general';
+export type EffectCategory = 'offense' | 'defense' | 'control' | 'utility';
+export type TargetType = 'self' | 'ally' | 'enemy' | 'aoe_enemy' | 'aoe_ally';
+export type CardStatus = 'draft' | 'published';
+
+export interface CardTier {
+  id: string;
+  env_id: string;
+  slug: string;
+  display_name: string;
+  cooldown_min_sec: number;
+  cooldown_max_sec: number;
+  power_multiplier: number;
+  position: number;
+}
+
+export interface EffectType {
+  id: string;
+  env_id: string;
+  slug: string;
+  display_name: string;
+  category: EffectCategory;
+  pp_weight: number;
+  description: string | null;
+}
+
+export interface Card {
+  id: string;
+  env_id: string;
+  name: string;
+  kind: CardKind;
+  combat_role_id: string | null;
+  tier_id: string;
+  cooldown_sec: number;
+  description: string | null;
+  status: CardStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CardEffect {
+  id: string;
+  card_id: string;
+  effect_type_id: string;
+  magnitude: number;
+  duration_sec: number;
+  target_type: TargetType;
+  target_count: number;
+  position: number;
+}
