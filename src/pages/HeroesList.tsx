@@ -9,6 +9,7 @@ import {
   balancePowerFromStats,
   deckContribution,
 } from '@/lib/balance-power-calculator';
+import { evaluateBudget, findBudget, verdictTone } from '@/lib/budget';
 import { Badge, Button, Empty, PageHeader, Panel } from '@/components/UI';
 import type {
   Card,
@@ -145,6 +146,17 @@ function HeroCard({
   const bpTotal = bpStats != null ? bpStats + (deckContrib?.total ?? 0) : null;
   const deckSize = deck.length;
 
+  const masteryRank =
+    ms != null && bundle
+      ? bundle.masteryRanks.filter((r) => r.ms_threshold <= ms).slice(-1)[0] ?? null
+      : null;
+  const budget =
+    bundle && masteryRank
+      ? findBudget(bundle.balanceBudgets, hero.combat_role_id, masteryRank.id)
+      : null;
+  const verdict = evaluateBudget(bpTotal, budget);
+  const bpTone = verdictTone(verdict);
+
   return (
     <Link to={`/heroes/${hero.id}`} className="block">
       <Panel
@@ -183,6 +195,16 @@ function HeroCard({
                 ? `${bpStats} + ${deckContrib.total} deck`
                 : undefined
             }
+            badgeTone={bpTone === 'neutral' ? null : bpTone}
+            badgeLabel={
+              verdict === 'too_low'
+                ? '↓ low'
+                : verdict === 'too_high'
+                ? '↑ high'
+                : verdict === 'ok'
+                ? '✓'
+                : null
+            }
           />
         </div>
       </Panel>
@@ -204,17 +226,24 @@ function ScoreCell({
   value,
   tone,
   hint,
+  badgeTone,
+  badgeLabel,
 }: {
   label: string;
   value: number | null;
   tone: 'ms' | 'bp';
   hint?: string;
+  badgeTone?: 'good' | 'warn' | 'bad' | null;
+  badgeLabel?: string | null;
 }) {
   const color = tone === 'ms' ? 'text-accent' : 'text-cyan-400';
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider text-muted">{label}</div>
-      <div className={`text-lg font-semibold ${color}`}>{value ?? '—'}</div>
+      <div className="flex items-baseline gap-2">
+        <span className={`text-lg font-semibold ${color}`}>{value ?? '—'}</span>
+        {badgeTone && badgeLabel && <Badge tone={badgeTone}>{badgeLabel}</Badge>}
+      </div>
       {hint && <div className="text-[10px] text-muted">{hint}</div>}
     </div>
   );

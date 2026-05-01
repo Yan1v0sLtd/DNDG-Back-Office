@@ -21,8 +21,8 @@ When asked to add a feature, ask first: *can this be expressed as a coefficient 
 | 1 | Auth, env-scoped config tables seeded from GDD, Heroes CRUD with live MS + Balance Power | ✅ Done |
 | 2 | Cards CRUD with effects + Card Power | ✅ Done |
 | 3 | Deck builder (5 role + 5 general) + hero Balance Power aggregation including deck | ✅ Done |
-| 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ⏳ Next |
-| 5 | Pairwise simulator + nightly balance report | ⏳ |
+| 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ✅ Done |
+| 5 | Pairwise simulator + nightly balance report | ⏳ Next |
 
 Don't start Phase 4 until ≥5 heroes with full decks are in dev. Don't start Phase 5 until ≥10. Without that, budget ranges and matchup expectations are uncalibrated.
 
@@ -56,6 +56,7 @@ src/
 │   ├── ms-calculator.ts            → GDD Mastery Score. Pure functions. No React, no Supabase.
 │   ├── balance-power-calculator.ts → Hero internal score (stats + deck) and deck-contribution helper.
 │   ├── card-power-calculator.ts    → Card internal score from effects, cooldown, tier.
+│   ├── budget.ts                   → Budget verdict (ok/too_low/too_high/no_budget) + tone helper.
 │   ├── useConfigBundle.ts          → Hook: fetches all config for current env. Pages use this.
 │   └── supabase.ts                 → Client only. No queries here.
 ├── contexts/
@@ -73,7 +74,8 @@ src/
 │   ├── CardsList.tsx
 │   ├── CardEditor.tsx              → Live Card Power recompute; effects sub-editor (add/edit/remove).
 │   └── admin/
-│       └── Coefficients.tsx        → Admin-only: edit attribute coefficients + stat weights.
+│       ├── Coefficients.tsx        → Admin-only: edit attribute coefficients + stat weights.
+│       └── Budgets.tsx              → Admin-only: BP envelope per (role × rank). Filter-by-role.
 └── types/database.ts               → Domain types matching the Supabase schema. Keep in sync with migrations.
 ```
 

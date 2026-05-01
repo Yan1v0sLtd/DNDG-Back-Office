@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type {
   AttributeCoefficient,
+  BalanceBudget,
   CardTier,
   CombatRole,
   EffectType,
@@ -20,6 +21,7 @@ export interface ConfigBundle {
   masteryRanks: MasteryRank[];
   cardTiers: CardTier[];
   effectTypes: EffectType[];
+  balanceBudgets: BalanceBudget[];
 }
 
 interface State {
@@ -41,13 +43,14 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
     setState((s) => ({ ...s, loading: true, error: null }));
 
     (async () => {
-      const [coef, sw, roles, ranks, tiers, effectTypes] = await Promise.all([
+      const [coef, sw, roles, ranks, tiers, effectTypes, budgets] = await Promise.all([
         supabase.from('attribute_coefficients').select('*').eq('env_id', envId),
         supabase.from('stat_weights').select('*').eq('env_id', envId),
         supabase.from('combat_roles').select('*').eq('env_id', envId).order('display_name'),
         supabase.from('mastery_ranks').select('*').eq('env_id', envId).order('rank'),
         supabase.from('card_tiers').select('*').eq('env_id', envId).order('position'),
         supabase.from('effect_types').select('*').eq('env_id', envId).order('display_name'),
+        supabase.from('balance_budgets').select('*').eq('env_id', envId),
       ]);
       if (cancelled) return;
 
@@ -58,6 +61,7 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
         ranks.error?.message ||
         tiers.error?.message ||
         effectTypes.error?.message ||
+        budgets.error?.message ||
         null;
 
       setState({
@@ -70,6 +74,7 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
               masteryRanks: (ranks.data ?? []) as MasteryRank[],
               cardTiers: (tiers.data ?? []) as CardTier[],
               effectTypes: (effectTypes.data ?? []) as EffectType[],
+              balanceBudgets: (budgets.data ?? []) as BalanceBudget[],
             },
         loading: false,
         error: err,

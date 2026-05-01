@@ -25,13 +25,13 @@ export function Layout() {
           </Section>
 
           <Section label="Balance">
-            <NavItem to="/balance" disabled>Balance Report <Badge>Phase 4</Badge></NavItem>
             <NavItem to="/simulator" disabled>Simulator <Badge>Phase 5</Badge></NavItem>
           </Section>
 
           {canWriteConfig() && (
             <Section label="Admin">
               <NavItem to="/admin/coefficients">Coefficients</NavItem>
+              <NavItem to="/admin/budgets">Budgets</NavItem>
             </Section>
           )}
         </nav>

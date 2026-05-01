@@ -20,6 +20,7 @@ import {
   Score,
 } from '@/components/UI';
 import { DeckPanel } from '@/components/DeckPanel';
+import { evaluateBudget, findBudget, verdictLabel, verdictTone } from '@/lib/budget';
 import {
   ALL_SLOTS,
   type Attribute,
@@ -188,6 +189,13 @@ export function HeroEditor() {
     const reached = bundle.masteryRanks.filter((r) => r.ms_threshold <= ms);
     return reached[reached.length - 1] ?? null;
   }, [ms, bundle]);
+
+  const budget = useMemo(() => {
+    if (!form || !masteryRank || !bundle) return null;
+    return findBudget(bundle.balanceBudgets, form.combat_role_id, masteryRank.id);
+  }, [form, masteryRank, bundle]);
+
+  const verdict = evaluateBudget(bpTotal, budget);
 
   if (!currentEnv) return null;
   if (cfgLoading || !form) {
@@ -389,6 +397,19 @@ export function HeroEditor() {
                     : 'Internal · sim & budgets'
                 }
               />
+            </div>
+            <div className="mt-3 pt-3 border-t border-line text-xs flex items-center justify-between">
+              <span className="text-muted uppercase tracking-wider">Budget</span>
+              {budget ? (
+                <span className="text-slate-200">
+                  {budget.bp_min ?? '—'} – {budget.bp_max ?? '—'}
+                </span>
+              ) : (
+                <span className="text-muted">not set</span>
+              )}
+            </div>
+            <div className="mt-2">
+              <Badge tone={verdictTone(verdict)}>{verdictLabel(verdict)}</Badge>
             </div>
           </Panel>
 

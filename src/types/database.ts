@@ -148,3 +148,17 @@ export const ALL_SLOTS = [...ROLE_SPECIFIC_SLOTS, ...GENERAL_SLOTS] as const;
 export function slotKind(slot: number): CardKind {
   return slot <= 5 ? 'role_specific' : 'general';
 }
+
+// ─── Phase 4 — Balance Budgets ──────────────────────────────────────────────
+
+export interface BalanceBudget {
+  id: string;
+  env_id: string;
+  combat_role_id: string;
+  mastery_rank_id: string;
+  bp_min: number | null;
+  bp_max: number | null;
+  notes: string | null;
+}
+
+export type BudgetVerdict = 'no_budget' | 'too_low' | 'too_high' | 'ok';

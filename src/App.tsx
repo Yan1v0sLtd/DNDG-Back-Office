@@ -8,6 +8,7 @@ import { HeroEditor } from '@/pages/HeroEditor';
 import { CardsList } from '@/pages/CardsList';
 import { CardEditor } from '@/pages/CardEditor';
 import { CoefficientsAdmin } from '@/pages/admin/Coefficients';
+import { BudgetsAdmin } from '@/pages/admin/Budgets';
 
 export function App() {
   return (
@@ -24,6 +25,7 @@ export function App() {
                 <Route path="/cards" element={<CardsList />} />
                 <Route path="/cards/:id" element={<CardEditor />} />
                 <Route path="/admin/coefficients" element={<CoefficientsAdmin />} />
+                <Route path="/admin/budgets" element={<BudgetsAdmin />} />
                 <Route path="*" element={<Navigate to="/heroes" replace />} />
               </Route>
             </Route>
