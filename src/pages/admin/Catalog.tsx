@@ -1,9 +1,6 @@
-// Phase 5c-bis — admin catalog: card_tiers, effect_types, combat_roles in
-// one tabbed page. Designers were previously editing these via Supabase
-// Studio; now they're first-class in the back-office.
-//
-// All three tables are env-scoped, admin-write per RLS. Inline edit, save
-// row-by-row. Delete only when no FKs reference the row (DB enforces).
+// Admin catalog — card_tiers, effect_types, combat_roles, attributes, stats
+// in one tabbed page. All env-scoped, admin-write per RLS. Inline edit,
+// save row-by-row. Delete blocked by FK references where applicable.
 
 import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
@@ -20,20 +17,23 @@ import {
   Panel,
 } from '@/components/UI';
 import type {
+  AttributeDef,
   CardTier,
   CombatRole,
   EffectCategory,
   EffectType,
   RangeKind,
+  StatDef,
+  StatRole,
 } from '@/types/database';
 
-type Tab = 'tiers' | 'effects' | 'roles';
+type Tab = 'attributes' | 'stats' | 'tiers' | 'effects' | 'roles';
 
 export function CatalogAdmin() {
   const { canWriteConfig } = useAuth();
   const { currentEnv } = useEnvironment();
   const { bundle, loading, reload } = useConfigBundle(currentEnv?.id ?? null);
-  const [tab, setTab] = useState<Tab>('tiers');
+  const [tab, setTab] = useState<Tab>('attributes');
 
   if (!canWriteConfig()) return <Navigate to="/heroes" replace />;
   if (!currentEnv) return null;
@@ -42,10 +42,12 @@ export function CatalogAdmin() {
     <>
       <PageHeader
         title="Catalog"
-        subtitle={`${currentEnv.name} environment · card tiers, effect types, combat roles`}
+        subtitle={`${currentEnv.name} environment · attributes, stats, card tiers, effect types, combat roles`}
       />
 
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <TabBtn active={tab === 'attributes'} onClick={() => setTab('attributes')}>Attributes</TabBtn>
+        <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')}>Stats</TabBtn>
         <TabBtn active={tab === 'tiers'} onClick={() => setTab('tiers')}>Card Tiers</TabBtn>
         <TabBtn active={tab === 'effects'} onClick={() => setTab('effects')}>Effect Types</TabBtn>
         <TabBtn active={tab === 'roles'} onClick={() => setTab('roles')}>Combat Roles</TabBtn>
@@ -55,6 +57,20 @@ export function CatalogAdmin() {
         <Panel><div className="text-muted text-sm">Loading…</div></Panel>
       ) : (
         <>
+          {tab === 'attributes' && (
+            <AttributesTable
+              envId={currentEnv.id}
+              attrs={bundle?.attributes ?? []}
+              onReload={reload}
+            />
+          )}
+          {tab === 'stats' && (
+            <StatsTable
+              envId={currentEnv.id}
+              stats={bundle?.stats ?? []}
+              onReload={reload}
+            />
+          )}
           {tab === 'tiers' && (
             <TiersTable
               envId={currentEnv.id}
@@ -502,6 +518,282 @@ function RolesTable({
         <Badge tone="warn">Heads up</Badge> Renaming or deleting a role affects all heroes and
         cards that reference it. The DB blocks deletion when any reference exists.
       </p>
+    </Panel>
+  );
+}
+
+// ─── Attributes ────────────────────────────────────────────────────────────
+
+function AttributesTable({
+  envId,
+  attrs,
+  onReload,
+}: {
+  envId: string;
+  attrs: AttributeDef[];
+  onReload: () => void;
+}) {
+  const [rows, setRows] = useState<(AttributeDef & { _dirty?: boolean })[]>(attrs);
+  const [adding, setAdding] = useState<Partial<AttributeDef>>({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRows(attrs);
+  }, [attrs]);
+
+  const update = (i: number, patch: Partial<AttributeDef>) =>
+    setRows((prev) => prev.map((r, j) => (j === i ? { ...r, ...patch, _dirty: true } : r)));
+
+  const onSave = async () => {
+    setSaving(true);
+    setMsg(null);
+    const dirty = rows.filter((r) => r._dirty).map(({ _dirty: _, ...r }) => r);
+    if (dirty.length > 0) {
+      const { error } = await supabase
+        .from('attributes')
+        .upsert(dirty, { onConflict: 'id' });
+      if (error) {
+        setSaving(false);
+        setMsg(error.message);
+        return;
+      }
+    }
+    setSaving(false);
+    setMsg('Saved.');
+    onReload();
+  };
+
+  const onAdd = async () => {
+    if (!adding.slug || !adding.display_name || adding.position == null) {
+      setMsg('Slug, display name, and position are required.');
+      return;
+    }
+    const { error } = await supabase.from('attributes').insert({
+      env_id: envId,
+      slug: adding.slug,
+      display_name: adding.display_name,
+      position: adding.position,
+      default_value: adding.default_value ?? 0,
+      min_value: adding.min_value ?? 0,
+      description: adding.description ?? null,
+    });
+    if (error) {
+      setMsg(error.message);
+      return;
+    }
+    setAdding({});
+    onReload();
+  };
+
+  const onDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete attribute "${name}"? Coefficients referencing it will also be deleted.`)) return;
+    const { error } = await supabase.from('attributes').delete().eq('id', id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    onReload();
+  };
+
+  return (
+    <Panel
+      title="Attributes"
+      actions={
+        <Button onClick={onSave} disabled={saving || !rows.some((r) => r._dirty)}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </Button>
+      }
+    >
+      <table className="w-full text-sm">
+        <thead className="text-xs text-muted uppercase tracking-wider">
+          <tr>
+            <th className="text-left py-2">Slug</th>
+            <th className="text-left py-2">Display</th>
+            <th className="text-right py-2 w-20">Position</th>
+            <th className="text-right py-2 w-24">Default</th>
+            <th className="text-right py-2 w-20">Min</th>
+            <th className="text-left py-2">Description</th>
+            <th className="py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.id} className="border-t border-line">
+              <td className="py-2 pr-2"><Input value={r.slug} onChange={(e) => update(i, { slug: e.target.value })} /></td>
+              <td className="py-2 pr-2"><Input value={r.display_name} onChange={(e) => update(i, { display_name: e.target.value })} /></td>
+              <td className="py-2 pr-2"><NumberInput value={r.position} step={1} onChange={(n) => update(i, { position: n })} /></td>
+              <td className="py-2 pr-2"><NumberInput value={r.default_value} step={1} onChange={(n) => update(i, { default_value: n })} /></td>
+              <td className="py-2 pr-2"><NumberInput value={r.min_value} step={1} onChange={(n) => update(i, { min_value: n })} /></td>
+              <td className="py-2 pr-2"><Input value={r.description ?? ''} onChange={(e) => update(i, { description: e.target.value })} /></td>
+              <td className="py-2"><Button variant="danger" onClick={() => onDelete(r.id, r.display_name)}>✕</Button></td>
+            </tr>
+          ))}
+          <tr className="border-t border-line">
+            <td className="py-2 pr-2"><Input placeholder="cunning" value={adding.slug ?? ''} onChange={(e) => setAdding({ ...adding, slug: e.target.value })} /></td>
+            <td className="py-2 pr-2"><Input placeholder="Cunning" value={adding.display_name ?? ''} onChange={(e) => setAdding({ ...adding, display_name: e.target.value })} /></td>
+            <td className="py-2 pr-2"><NumberInput value={adding.position ?? 0} step={1} onChange={(n) => setAdding({ ...adding, position: n })} /></td>
+            <td className="py-2 pr-2"><NumberInput value={adding.default_value ?? 0} step={1} onChange={(n) => setAdding({ ...adding, default_value: n })} /></td>
+            <td className="py-2 pr-2"><NumberInput value={adding.min_value ?? 0} step={1} onChange={(n) => setAdding({ ...adding, min_value: n })} /></td>
+            <td className="py-2 pr-2"><Input placeholder="(optional)" value={adding.description ?? ''} onChange={(e) => setAdding({ ...adding, description: e.target.value })} /></td>
+            <td className="py-2"><Button onClick={onAdd}>Add</Button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="text-xs text-muted mt-3">
+        After adding a new attribute, go to <strong>Coefficients</strong> to set its
+        coefficient (rate × stat it produces). Heroes pick up new attributes automatically
+        with the default value.
+      </p>
+      {msg && <div className="mt-3 text-xs text-muted">{msg}</div>}
+    </Panel>
+  );
+}
+
+// ─── Stats ─────────────────────────────────────────────────────────────────
+
+const STAT_ROLES: StatRole[] = ['hp', 'dmg', 'evasion', 'resilience', 'range', 'other'];
+
+function StatsTable({
+  envId,
+  stats,
+  onReload,
+}: {
+  envId: string;
+  stats: StatDef[];
+  onReload: () => void;
+}) {
+  const [rows, setRows] = useState<(StatDef & { _dirty?: boolean })[]>(stats);
+  const [adding, setAdding] = useState<Partial<StatDef>>({ role: 'other' });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRows(stats);
+  }, [stats]);
+
+  const update = (i: number, patch: Partial<StatDef>) =>
+    setRows((prev) => prev.map((r, j) => (j === i ? { ...r, ...patch, _dirty: true } : r)));
+
+  const onSave = async () => {
+    setSaving(true);
+    setMsg(null);
+    const dirty = rows.filter((r) => r._dirty).map(({ _dirty: _, ...r }) => r);
+    if (dirty.length > 0) {
+      const { error } = await supabase
+        .from('stats')
+        .upsert(dirty, { onConflict: 'id' });
+      if (error) {
+        setSaving(false);
+        setMsg(error.message);
+        return;
+      }
+    }
+    setSaving(false);
+    setMsg('Saved.');
+    onReload();
+  };
+
+  const onAdd = async () => {
+    if (!adding.slug || !adding.display_name || adding.position == null) {
+      setMsg('Slug, display name, and position are required.');
+      return;
+    }
+    const { error } = await supabase.from('stats').insert({
+      env_id: envId,
+      slug: adding.slug,
+      display_name: adding.display_name,
+      unit_label: adding.unit_label ?? null,
+      role: adding.role ?? 'other',
+      position: adding.position,
+      description: adding.description ?? null,
+    });
+    if (error) {
+      setMsg(error.message);
+      return;
+    }
+    setAdding({ role: 'other' });
+    onReload();
+  };
+
+  const onDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete stat "${name}"? Weights and coefficients referencing it will also be deleted.`)) return;
+    const { error } = await supabase.from('stats').delete().eq('id', id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    onReload();
+  };
+
+  return (
+    <Panel
+      title="Stats"
+      actions={
+        <Button onClick={onSave} disabled={saving || !rows.some((r) => r._dirty)}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </Button>
+      }
+    >
+      <table className="w-full text-sm">
+        <thead className="text-xs text-muted uppercase tracking-wider">
+          <tr>
+            <th className="text-left py-2">Slug</th>
+            <th className="text-left py-2">Display</th>
+            <th className="text-left py-2 w-16">Unit</th>
+            <th className="text-left py-2 w-32">Role</th>
+            <th className="text-right py-2 w-20">Position</th>
+            <th className="text-left py-2">Description</th>
+            <th className="py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.id} className="border-t border-line">
+              <td className="py-2 pr-2"><Input value={r.slug} onChange={(e) => update(i, { slug: e.target.value })} /></td>
+              <td className="py-2 pr-2"><Input value={r.display_name} onChange={(e) => update(i, { display_name: e.target.value })} /></td>
+              <td className="py-2 pr-2"><Input value={r.unit_label ?? ''} placeholder="(none)" onChange={(e) => update(i, { unit_label: e.target.value || null })} /></td>
+              <td className="py-2 pr-2">
+                <select
+                  className="w-full bg-ink border border-line rounded-md px-2 py-1.5 text-sm"
+                  value={r.role}
+                  onChange={(e) => update(i, { role: e.target.value as StatRole })}
+                >
+                  {STAT_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+                </select>
+              </td>
+              <td className="py-2 pr-2"><NumberInput value={r.position} step={1} onChange={(n) => update(i, { position: n })} /></td>
+              <td className="py-2 pr-2"><Input value={r.description ?? ''} onChange={(e) => update(i, { description: e.target.value })} /></td>
+              <td className="py-2"><Button variant="danger" onClick={() => onDelete(r.id, r.display_name)}>✕</Button></td>
+            </tr>
+          ))}
+          <tr className="border-t border-line">
+            <td className="py-2 pr-2"><Input placeholder="crit_chance" value={adding.slug ?? ''} onChange={(e) => setAdding({ ...adding, slug: e.target.value })} /></td>
+            <td className="py-2 pr-2"><Input placeholder="Crit Chance" value={adding.display_name ?? ''} onChange={(e) => setAdding({ ...adding, display_name: e.target.value })} /></td>
+            <td className="py-2 pr-2"><Input placeholder="%" value={adding.unit_label ?? ''} onChange={(e) => setAdding({ ...adding, unit_label: e.target.value || null })} /></td>
+            <td className="py-2 pr-2">
+              <select
+                className="w-full bg-ink border border-line rounded-md px-2 py-1.5 text-sm"
+                value={adding.role ?? 'other'}
+                onChange={(e) => setAdding({ ...adding, role: e.target.value as StatRole })}
+              >
+                {STAT_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+              </select>
+            </td>
+            <td className="py-2 pr-2"><NumberInput value={adding.position ?? 0} step={1} onChange={(n) => setAdding({ ...adding, position: n })} /></td>
+            <td className="py-2 pr-2"><Input placeholder="(optional)" value={adding.description ?? ''} onChange={(e) => setAdding({ ...adding, description: e.target.value })} /></td>
+            <td className="py-2"><Button onClick={onAdd}>Add</Button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="text-xs text-muted mt-3">
+        <Badge tone="warn">Roles</Badge>{' '}
+        The simulator's combat math uses the stat with each of these roles:
+        <code className="ml-1">hp, dmg, evasion, resilience, range</code>. Stats with role
+        <code className="mx-1">other</code> contribute to MS/BP if weighted but are
+        ignored by the simulator. New roles can't be invented without code changes.
+      </p>
+      {msg && <div className="mt-3 text-xs text-muted">{msg}</div>}
     </Panel>
   );
 }

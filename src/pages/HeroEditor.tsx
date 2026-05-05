@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
@@ -21,16 +21,14 @@ import {
   Panel,
   Score,
 } from '@/components/UI';
-import { Link } from 'react-router-dom';
 import { DeckPanel } from '@/components/DeckPanel';
 import { evaluateBudget, findBudget, verdictLabel, verdictTone } from '@/lib/budget';
 import {
   ALL_SLOTS,
-  type Attribute,
+  ROLE_SPECIFIC_SLOTS,
   type Card,
   type CardEffect,
   type Hero,
-  type HeroAttributes,
   type HeroDeckEntry,
   type HeroStatus,
 } from '@/types/database';
@@ -41,31 +39,21 @@ interface Form {
   combat_role_id: string;
   description: string;
   status: HeroStatus;
-  vitality: number;
-  might: number;
-  range: number;
-  haste: number;
-  resilience: number;
+  /** Map of attribute slug → value. Replaces the old inline fields. */
+  attribute_values: Record<string, number>;
 }
 
-const empty = (combat_role_id: string): Form => ({
+const initialForm = (
+  combat_role_id: string,
+  defaults: Record<string, number>,
+): Form => ({
   name: '',
   race: '',
   combat_role_id,
   description: '',
   status: 'draft',
-  vitality: 0,
-  might: 0,
-  range: 1,
-  haste: 0,
-  resilience: 0,
+  attribute_values: defaults,
 });
-
-const emptyDeck = (): Map<number, string | null> => {
-  const m = new Map<number, string | null>();
-  ALL_SLOTS.forEach((s) => m.set(s, null));
-  return m;
-};
 
 export function HeroEditor() {
   const { id } = useParams<{ id: string }>();
@@ -82,7 +70,6 @@ export function HeroEditor() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch cards + effects for the env (picker pool + power computation).
   useEffect(() => {
     if (!currentEnv) return;
     let cancelled = false;
@@ -112,11 +99,14 @@ export function HeroEditor() {
     };
   }, [currentEnv?.id]);
 
-  // Initialize hero form + deck once config + (optional) hero are loaded.
   useEffect(() => {
     if (!currentEnv || !bundle) return;
     if (isNew) {
-      setForm(empty(bundle.combatRoles[0]?.id ?? ''));
+      const defaults: Record<string, number> = {};
+      bundle.attributes.forEach((a) => {
+        defaults[a.slug] = a.default_value;
+      });
+      setForm(initialForm(bundle.combatRoles[0]?.id ?? '', defaults));
       setDeck(emptyDeck());
       return;
     }
@@ -132,17 +122,19 @@ export function HeroEditor() {
         return;
       }
       const h = heroRes.data as Hero;
+      // Backfill any new attributes with their defaults so the editor
+      // always has all current attributes present.
+      const merged: Record<string, number> = {};
+      bundle.attributes.forEach((a) => {
+        merged[a.slug] = h.attribute_values[a.slug] ?? a.default_value;
+      });
       setForm({
         name: h.name,
         race: h.race ?? '',
         combat_role_id: h.combat_role_id,
         description: h.description ?? '',
         status: h.status,
-        vitality: h.vitality,
-        might: h.might,
-        range: h.range,
-        haste: h.haste,
-        resilience: h.resilience,
+        attribute_values: merged,
       });
       const d = emptyDeck();
       ((deckRes.data ?? []) as HeroDeckEntry[]).forEach((row) => {
@@ -157,18 +149,12 @@ export function HeroEditor() {
 
   const stats = useMemo(() => {
     if (!form || !bundle) return null;
-    const attrs: HeroAttributes = {
-      vitality: form.vitality,
-      might: form.might,
-      range: form.range,
-      haste: form.haste,
-      resilience: form.resilience,
-    };
-    return deriveStats(attrs, bundle.coefficients);
+    return deriveStats(form.attribute_values, bundle.attributes, bundle.coefficients, bundle.stats);
   }, [form, bundle]);
 
-  const ms = stats && bundle ? masteryScore(stats, bundle.statWeights) : null;
-  const bpStats = stats && bundle ? balancePowerFromStats(stats, bundle.statWeights) : null;
+  const ms = stats && bundle ? masteryScore(stats, bundle.statWeights, bundle.stats) : null;
+  const bpStats =
+    stats && bundle ? balancePowerFromStats(stats, bundle.statWeights, bundle.stats) : null;
 
   const deckCards = useMemo(() => {
     const ids: string[] = [];
@@ -212,7 +198,15 @@ export function HeroEditor() {
     setSaving(true);
     setError(null);
 
-    const payload = { ...form, env_id: currentEnv.id };
+    const payload = {
+      env_id: currentEnv.id,
+      name: form.name,
+      race: form.race,
+      combat_role_id: form.combat_role_id,
+      description: form.description,
+      status: form.status,
+      attribute_values: form.attribute_values,
+    };
     const heroRes = isNew
       ? await supabase.from('heroes').insert(payload).select('id').single()
       : await supabase.from('heroes').update(payload).eq('id', id!).select('id').single();
@@ -223,7 +217,6 @@ export function HeroEditor() {
     }
     const heroId = heroRes.data.id as string;
 
-    // Save deck: delete-all-and-reinsert (matches the card_effects pattern).
     const del = await supabase.from('hero_decks').delete().eq('hero_id', heroId);
     if (del.error) {
       setSaving(false);
@@ -258,11 +251,10 @@ export function HeroEditor() {
     navigate('/heroes');
   };
 
-  // Clear deck slots if combat role changes — role-specific cards no longer match.
   const onChangeRole = (newRoleId: string) => {
     if (newRoleId !== form.combat_role_id) {
       const next = new Map(deck);
-      [1, 2, 3, 4, 5].forEach((s) => next.set(s, null));
+      ROLE_SPECIFIC_SLOTS.forEach((s) => next.set(s, null));
       setDeck(next);
     }
     setForm({ ...form, combat_role_id: newRoleId });
@@ -345,13 +337,21 @@ export function HeroEditor() {
           </Panel>
 
           <Panel title="Attributes" actions={<Badge>1 attr point ≈ 10 MS</Badge>}>
-            <div className="grid grid-cols-5 gap-3">
-              {(['vitality', 'might', 'range', 'haste', 'resilience'] as Attribute[]).map((a) => (
-                <Field key={a} label={a}>
+            <div
+              className="grid gap-3"
+              style={{ gridTemplateColumns: `repeat(${Math.max(1, bundle?.attributes.length ?? 1)}, minmax(0, 1fr))` }}
+            >
+              {bundle?.attributes.map((a) => (
+                <Field key={a.id} label={a.display_name}>
                   <NumberInput
-                    value={(form as unknown as Record<Attribute, number>)[a]}
-                    min={a === 'range' ? 1 : 0}
-                    onChange={(n) => setForm({ ...form, [a]: n })}
+                    value={form.attribute_values[a.slug] ?? a.default_value}
+                    min={a.min_value}
+                    onChange={(n) =>
+                      setForm({
+                        ...form,
+                        attribute_values: { ...form.attribute_values, [a.slug]: n },
+                      })
+                    }
                     disabled={!writable}
                   />
                 </Field>
@@ -376,11 +376,14 @@ export function HeroEditor() {
         <div className="space-y-4 xl:sticky xl:top-4 self-start">
           <Panel title="Computed">
             <div className="grid grid-cols-2 gap-2">
-              <Score label="HP" value={stats?.hp ?? '—'} />
-              <Score label="DMG" value={stats?.dmg ?? '—'} />
-              <Score label="Evasion %" value={stats ? `${stats.evasion_pct}` : '—'} />
-              <Score label="Resilience %" value={stats ? `${stats.resilience_pct}` : '—'} />
-              <Score label="Range" value={stats?.range ?? '—'} />
+              {bundle?.stats.map((s) => {
+                const v = stats?.[s.slug] ?? '—';
+                const display =
+                  typeof v === 'number'
+                    ? `${v}${s.unit_label ?? ''}`
+                    : v;
+                return <Score key={s.id} label={s.display_name} value={display} />;
+              })}
               <Score label="Mastery Rank" value={masteryRank?.rank ?? '—'} />
             </div>
             <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-line">
@@ -416,21 +419,21 @@ export function HeroEditor() {
             </div>
             <HowCalculated>
               <p>
-                <strong>Mastery Score</strong> (player-facing, GDD formula):
+                <strong>Mastery Score</strong> (player-facing): each stat × its{' '}
+                <code>ms_weight</code>.
               </p>
-              <Formula>{`MS = (HP × 2) + (DMG × 20)
-   + (Evasion% × 8) + (Resilience% × 5)
-Range is excluded by design.`}</Formula>
+              <Formula>{`MS = Σ stat × ms_weight[stat]`}</Formula>
               <p>
-                <strong>Balance Power</strong> (internal): same shape but uses{' '}
-                <code>bp_weight</code> instead of <code>ms_weight</code>, plus the
-                deck's total Card Power. Range carries real weight here.
+                <strong>Balance Power</strong> (internal): same shape but with{' '}
+                <code>bp_weight</code>, plus the deck's total Card Power.
               </p>
               <Formula>{`stat_BP = Σ stat × bp_weight[stat]
 Balance Power = stat_BP + Σ Card Power across deck`}</Formula>
               <p>
-                Tunable in <Link to="/admin/coefficients" className="text-accent underline">Admin → Coefficients</Link>.
-                See <Link to="/docs/formulas" className="text-accent underline">/docs/formulas</Link> for the full reference.
+                Attributes, stats, and weights are all admin-editable. See{' '}
+                <Link to="/admin/coefficients" className="text-accent underline">Coefficients</Link>,
+                {' '}<Link to="/admin/catalog" className="text-accent underline">Catalog</Link>, and the
+                {' '}<Link to="/docs/formulas" className="text-accent underline">Formulas reference</Link>.
               </p>
             </HowCalculated>
           </Panel>
@@ -474,4 +477,10 @@ Balance Power = stat_BP + Σ Card Power across deck`}</Formula>
       </div>
     </>
   );
+}
+
+function emptyDeck(): Map<number, string | null> {
+  const m = new Map<number, string | null>();
+  ALL_SLOTS.forEach((s) => m.set(s, null));
+  return m;
 }

@@ -1,10 +1,14 @@
-// Shared loader: assemble HeroFull (hero + derived stats + deck cards + effects)
-// for either a single hero or every hero in the env. Used by /simulator (one
-// hero per side) and /sweep (NxN matchups).
+// Shared loader: assemble HeroFull (hero + role-mapped derived stats + deck
+// cards + effects). Used by /simulator and /sweep.
+//
+// Tier 3: derives stats dynamically from attribute_values via the
+// attribute_coefficients/stats tables, then maps stats to the simulator's
+// fixed roles (hp, dmg, evasion, resilience, range) by stats.role.
 
 import { supabase } from '@/lib/supabase';
 import { deriveStats } from '@/lib/ms-calculator';
 import type { ConfigBundle } from '@/lib/useConfigBundle';
+import { statValueByRole } from '@/types/database';
 import type {
   Card,
   CardEffect,
@@ -15,7 +19,6 @@ import type { CombatantInput } from '@/lib/simulator';
 
 export type HeroFull = CombatantInput;
 
-/** Load every hero in the env with full deck data. One round-trip in 4 queries. */
 export async function loadAllCombatants(
   envId: string,
   bundle: ConfigBundle,
@@ -49,7 +52,6 @@ export async function loadAllCombatants(
   );
 }
 
-/** Load one hero with full deck data. Internally shares the assembly with the bulk loader. */
 export async function loadCombatant(
   heroId: string,
   bundle: ConfigBundle,
@@ -106,18 +108,26 @@ function assemble(
   });
 
   return heroes.map((h) => {
-    const stats = deriveStats(h, bundle.coefficients);
+    const allDerived = deriveStats(
+      h.attribute_values,
+      bundle.attributes,
+      bundle.coefficients,
+      bundle.stats,
+    );
     const deck = (decksByHero.get(h.id) ?? [])
       .map((d) => ({ card: cardsById.get(d.card_id), effects: effsByCard.get(d.card_id) ?? [] }))
       .filter((x): x is { card: Card; effects: CardEffect[] } => Boolean(x.card));
     return {
       hero: h,
+      // The simulator's combat math operates on fixed roles. We extract them
+      // from the dynamic derived stats here so the simulator stays simple.
+      // Stats with role='other' are ignored by combat math but still feed BP.
       derived: {
-        hp: stats.hp,
-        dmg: stats.dmg,
-        evasion_pct: stats.evasion_pct,
-        resilience_pct: stats.resilience_pct,
-        range: stats.range,
+        hp: statValueByRole(allDerived, bundle.stats, 'hp'),
+        dmg: statValueByRole(allDerived, bundle.stats, 'dmg'),
+        evasion_pct: statValueByRole(allDerived, bundle.stats, 'evasion'),
+        resilience_pct: statValueByRole(allDerived, bundle.stats, 'resilience'),
+        range: statValueByRole(allDerived, bundle.stats, 'range'),
       },
       deck,
     };

@@ -1,10 +1,10 @@
 // Domain types mirroring the Supabase schema. Keep in sync with migrations.
 
-export type Attribute = 'vitality' | 'might' | 'range' | 'haste' | 'resilience';
-export type Stat = 'hp' | 'dmg' | 'evasion_pct' | 'resilience_pct' | 'range';
+// String slugs (no longer literal unions — see Tier 3 below).
 export type RangeKind = 'melee' | 'ranged' | 'mixed';
 export type HeroStatus = 'draft' | 'published';
 export type UserRoleName = 'admin' | 'designer' | 'viewer';
+export type StatRole = 'hp' | 'dmg' | 'evasion' | 'resilience' | 'range' | 'other';
 
 export interface Environment {
   id: string;
@@ -12,17 +12,43 @@ export interface Environment {
   created_at: string;
 }
 
+// ─── Tier 3 — data-driven attributes + stats ───────────────────────────────
+
+export interface AttributeDef {
+  id: string;
+  env_id: string;
+  slug: string;
+  display_name: string;
+  position: number;
+  default_value: number;
+  min_value: number;
+  description: string | null;
+}
+
+export interface StatDef {
+  id: string;
+  env_id: string;
+  slug: string;
+  display_name: string;
+  unit_label: string | null;
+  role: StatRole;
+  position: number;
+  description: string | null;
+}
+
+/** Maps attribute_id → (stat_per_point, produces_stat_id). */
 export interface AttributeCoefficient {
   id: string;
   env_id: string;
-  attribute: Attribute;
+  attribute_id: string;
+  produces_stat_id: string;
   stat_per_point: number;
 }
 
 export interface StatWeight {
   id: string;
   env_id: string;
-  stat: Stat;
+  stat_id: string;
   ms_weight: number;
   bp_weight: number;
 }
@@ -52,32 +78,16 @@ export interface Hero {
   combat_role_id: string;
   description: string | null;
   status: HeroStatus;
-  vitality: number;
-  might: number;
-  range: number;
-  haste: number;
-  resilience: number;
+  /** Map of attribute slug → numeric value. Replaces inline columns. */
+  attribute_values: Record<string, number>;
   created_at: string;
   updated_at: string;
 }
 
-export interface HeroAttributes {
-  vitality: number;
-  might: number;
-  range: number;
-  haste: number;
-  resilience: number;
-}
+/** A combatant's derived stats: dynamic shape, keyed by stat slug. */
+export type DerivedStats = Record<string, number>;
 
-export interface CombatStats {
-  hp: number;
-  dmg: number;
-  evasion_pct: number;
-  resilience_pct: number;
-  range: number;
-}
-
-// ─── Phase 2 — Cards ────────────────────────────────────────────────────────
+// ─── Phase 2 — Cards (unchanged) ───────────────────────────────────────────
 
 export type CardKind = 'role_specific' | 'general';
 export type EffectCategory = 'offense' | 'defense' | 'control' | 'utility';
@@ -130,10 +140,8 @@ export interface CardEffect {
   position: number;
 }
 
-// ─── Phase 3 — Decks ────────────────────────────────────────────────────────
+// ─── Phase 3 — Decks ───────────────────────────────────────────────────────
 
-// Slots 1..5 are role-specific (must match hero's combat_role); slots 6..10
-// are general. Convention enforced in app code, not in the database.
 export interface HeroDeckEntry {
   id: string;
   hero_id: string;
@@ -149,7 +157,7 @@ export function slotKind(slot: number): CardKind {
   return slot <= 5 ? 'role_specific' : 'general';
 }
 
-// ─── Phase 4 — Balance Budgets ──────────────────────────────────────────────
+// ─── Phase 4 — Balance Budgets ─────────────────────────────────────────────
 
 export interface BalanceBudget {
   id: string;
@@ -166,6 +174,19 @@ export type BudgetVerdict = 'no_budget' | 'too_low' | 'too_high' | 'ok';
 // ─── Phase 5c — Simulation runs ────────────────────────────────────────────
 
 export type SimulationKind = 'pairwise' | 'sweep';
+
+export interface SimulationRun {
+  id: string;
+  env_id: string;
+  kind: SimulationKind;
+  hero_a_id: string | null;
+  hero_b_id: string | null;
+  runs_per_matchup: number;
+  result: unknown;
+  notes: string | null;
+  created_at: string;
+  created_by: string | null;
+}
 
 // ─── Tier 1 flexibility — Simulator config ─────────────────────────────────
 
@@ -194,16 +215,26 @@ export const SIMULATOR_CONFIG_DEFAULTS: Omit<SimulatorConfig, 'env_id'> = {
   default_sweep_runs: 200,
 };
 
-export interface SimulationRun {
-  id: string;
-  env_id: string;
-  kind: SimulationKind;
-  hero_a_id: string | null;
-  hero_b_id: string | null;
-  runs_per_matchup: number;
-  /** For pairwise: BatchResult shape. For sweep: { cells: Record<key, BatchResult>; hero_ids: string[] }. */
-  result: unknown;
-  notes: string | null;
-  created_at: string;
-  created_by: string | null;
+// ─── Lookup helpers ────────────────────────────────────────────────────────
+
+export function findAttribute(attrs: AttributeDef[], id: string): AttributeDef | undefined {
+  return attrs.find((a) => a.id === id);
+}
+
+export function findStat(stats: StatDef[], id: string): StatDef | undefined {
+  return stats.find((s) => s.id === id);
+}
+
+export function findStatByRole(stats: StatDef[], role: StatRole): StatDef | undefined {
+  return stats.find((s) => s.role === role);
+}
+
+export function statValueByRole(
+  derived: DerivedStats,
+  stats: StatDef[],
+  role: StatRole,
+): number {
+  const def = findStatByRole(stats, role);
+  if (!def) return 0;
+  return derived[def.slug] ?? 0;
 }

@@ -132,9 +132,12 @@ function HeroCard({
   effectsByCard: Map<string, CardEffect[]>;
 }) {
   const role = roles.find((r) => r.id === hero.combat_role_id);
-  const stats = bundle ? deriveStats(hero, bundle.coefficients) : null;
-  const ms = stats && bundle ? masteryScore(stats, bundle.statWeights) : null;
-  const bpStats = stats && bundle ? balancePowerFromStats(stats, bundle.statWeights) : null;
+  const derived = bundle
+    ? deriveStats(hero.attribute_values, bundle.attributes, bundle.coefficients, bundle.stats)
+    : null;
+  const ms = derived && bundle ? masteryScore(derived, bundle.statWeights, bundle.stats) : null;
+  const bpStats =
+    derived && bundle ? balancePowerFromStats(derived, bundle.statWeights, bundle.stats) : null;
 
   const deckCards = deck
     .map((d) => cards.get(d.card_id))
@@ -177,11 +180,16 @@ function HeroCard({
         }
       >
         <div className="grid grid-cols-2 gap-2 text-sm">
-          <Stat label="HP" value={stats?.hp} />
-          <Stat label="DMG" value={stats?.dmg} />
-          <Stat label="Evasion" value={stats ? `${stats.evasion_pct}%` : null} />
-          <Stat label="Resilience" value={stats ? `${stats.resilience_pct}%` : null} />
-          <Stat label="Range" value={stats?.range} />
+          {bundle?.stats.map((s) => {
+            const v = derived?.[s.slug];
+            return (
+              <Stat
+                key={s.id}
+                label={s.display_name}
+                value={v != null ? `${v}${s.unit_label ?? ''}` : null}
+              />
+            );
+          })}
           <Stat label="Race" value={hero.race ?? '—'} />
         </div>
         <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-line">

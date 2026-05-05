@@ -1,48 +1,55 @@
 // Mastery Score — the player-facing score per the GDD.
-// MS = (HP × 2) + (DMG × 20) + (Evasion% × 8) + (Resilience% × 5)
-// Range is intentionally excluded (compensated by lower base damage on ranged heroes).
-//
-// All weights and conversions are READ FROM CONFIG, not hardcoded. If a designer
-// retunes a coefficient in the admin UI, every hero's MS reprices instantly.
+// Tier 3: data-driven. attributes and stats live in DB tables; the formulas
+// iterate over coefficients (each row says "this attribute produces this
+// stat at this rate") and stat_weights (each row says "this stat counts
+// for X MS per unit and Y BP per unit").
 
 import type {
-  Attribute,
   AttributeCoefficient,
-  CombatStats,
-  HeroAttributes,
-  Stat,
+  AttributeDef,
+  DerivedStats,
+  StatDef,
   StatWeight,
 } from '@/types/database';
 
+/**
+ * Compute a hero's combat stats from its attribute_values map.
+ * Iterates over all coefficient rows: for each, multiply the attribute
+ * value by stat_per_point and add to the produces_stat slug's running total.
+ * Stats that no coefficient targets default to 0.
+ */
 export function deriveStats(
-  attrs: HeroAttributes,
+  attrValues: Record<string, number>,
+  attributes: AttributeDef[],
   coefficients: AttributeCoefficient[],
-): CombatStats {
-  const c = (a: Attribute) =>
-    coefficients.find((x) => x.attribute === a)?.stat_per_point ?? 0;
-
-  return {
-    hp: round(attrs.vitality * c('vitality')),
-    dmg: round(attrs.might * c('might'), 2),
-    evasion_pct: round(attrs.haste * c('haste'), 2),
-    resilience_pct: round(attrs.resilience * c('resilience'), 2),
-    range: round(attrs.range * c('range')),
-  };
+  stats: StatDef[],
+): DerivedStats {
+  const out: DerivedStats = {};
+  for (const s of stats) out[s.slug] = 0;
+  for (const c of coefficients) {
+    const attr = attributes.find((a) => a.id === c.attribute_id);
+    const stat = stats.find((s) => s.id === c.produces_stat_id);
+    if (!attr || !stat) continue;
+    const v = attrValues[attr.slug] ?? 0;
+    out[stat.slug] = (out[stat.slug] ?? 0) + v * c.stat_per_point;
+  }
+  // Round to 2dp (matches the previous behavior; downstream code rounds further).
+  for (const k of Object.keys(out)) {
+    out[k] = Math.round(out[k] * 100) / 100;
+  }
+  return out;
 }
 
-export function masteryScore(stats: CombatStats, weights: StatWeight[]): number {
-  const w = (s: Stat) =>
-    weights.find((x) => x.stat === s)?.ms_weight ?? 0;
-  const ms =
-    stats.hp * w('hp') +
-    stats.dmg * w('dmg') +
-    stats.evasion_pct * w('evasion_pct') +
-    stats.resilience_pct * w('resilience_pct') +
-    stats.range * w('range');
-  return Math.round(ms);
-}
-
-function round(n: number, dp = 0) {
-  const f = 10 ** dp;
-  return Math.round(n * f) / f;
+export function masteryScore(
+  derived: DerivedStats,
+  weights: StatWeight[],
+  stats: StatDef[],
+): number {
+  let total = 0;
+  for (const w of weights) {
+    const stat = stats.find((s) => s.id === w.stat_id);
+    if (!stat) continue;
+    total += (derived[stat.slug] ?? 0) * w.ms_weight;
+  }
+  return Math.round(total);
 }

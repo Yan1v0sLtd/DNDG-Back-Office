@@ -1,22 +1,27 @@
 // One fetch per page for all config tables of the current environment.
 // Pages call this hook ONCE at the top instead of fetching coefficients,
-// stat weights, roles, ranks, tiers, and effect types separately.
+// stat weights, roles, ranks, tiers, effect types, attributes, stats,
+// and the simulator config separately.
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type {
   AttributeCoefficient,
+  AttributeDef,
   BalanceBudget,
   CardTier,
   CombatRole,
   EffectType,
   MasteryRank,
   SimulatorConfig,
+  StatDef,
   StatWeight,
 } from '@/types/database';
 import { SIMULATOR_CONFIG_DEFAULTS } from '@/types/database';
 
 export interface ConfigBundle {
+  attributes: AttributeDef[];
+  stats: StatDef[];
   coefficients: AttributeCoefficient[];
   statWeights: StatWeight[];
   combatRoles: CombatRole[];
@@ -46,7 +51,20 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
     setState((s) => ({ ...s, loading: true, error: null }));
 
     (async () => {
-      const [coef, sw, roles, ranks, tiers, effectTypes, budgets, simCfg] = await Promise.all([
+      const [
+        attrs,
+        stats,
+        coef,
+        sw,
+        roles,
+        ranks,
+        tiers,
+        effectTypes,
+        budgets,
+        simCfg,
+      ] = await Promise.all([
+        supabase.from('attributes').select('*').eq('env_id', envId).order('position'),
+        supabase.from('stats').select('*').eq('env_id', envId).order('position'),
         supabase.from('attribute_coefficients').select('*').eq('env_id', envId),
         supabase.from('stat_weights').select('*').eq('env_id', envId),
         supabase.from('combat_roles').select('*').eq('env_id', envId).order('display_name'),
@@ -59,6 +77,8 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
       if (cancelled) return;
 
       const err =
+        attrs.error?.message ||
+        stats.error?.message ||
         coef.error?.message ||
         sw.error?.message ||
         roles.error?.message ||
@@ -78,6 +98,8 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
         bundle: err
           ? null
           : {
+              attributes: (attrs.data ?? []) as AttributeDef[],
+              stats: (stats.data ?? []) as StatDef[],
               coefficients: (coef.data ?? []) as AttributeCoefficient[],
               statWeights: (sw.data ?? []) as StatWeight[],
               combatRoles: (roles.data ?? []) as CombatRole[],

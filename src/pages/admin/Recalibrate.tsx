@@ -1,18 +1,4 @@
-// Phase 5d — BP recalibration admin page.
-//
-// Workflow:
-//   1. Pick a saved sweep (from /history) as the data source.
-//   2. We compute current stats and deck power for each hero in that sweep.
-//   3. Fit a linear model on (stat_a - stat_b) and (deck_a - deck_b)
-//      against (win_rate_a - 0.5).
-//   4. Display current bp_weight vs fitted coefficient vs suggested
-//      (rescaled, HP-anchored) values.
-//   5. Apply button upserts the suggested bp_weights.
-//
-// Caveat: heroes/decks may have changed since the sweep ran. We use
-// current data, which is the right call when designers are iterating
-// (recalibrate against today's roster). For historical analysis they'd
-// need a snapshot column — out of scope for v1.
+// Phase 5d — BP recalibration admin page (Tier 3 generalized).
 
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
@@ -24,9 +10,9 @@ import { Badge, Button, Empty, PageHeader, Panel } from '@/components/UI';
 import { loadAllCombatants } from '@/lib/load-combatants';
 import { cardPower } from '@/lib/card-power-calculator';
 import { deriveStats } from '@/lib/ms-calculator';
-import { recalibrate, FEATURE_KEYS, type RecalibrateResult } from '@/lib/recalibrate';
+import { recalibrate, type RecalibrateResult } from '@/lib/recalibrate';
 import type { BatchResult } from '@/lib/simulator';
-import type { CombatStats, SimulationRun } from '@/types/database';
+import type { DerivedStats, SimulationRun } from '@/types/database';
 
 interface SweepResult {
   cells: Record<string, BatchResult>;
@@ -88,12 +74,14 @@ export function RecalibrateAdmin() {
     }
 
     try {
-      // Fetch full combatants (heroes + decks) so we can compute deck power.
       const list = await loadAllCombatants(currentEnv.id, bundle, { onlyPublished: true });
-      const statsByHero = new Map<string, CombatStats>();
+      const statsByHero = new Map<string, DerivedStats>();
       const deckPowerByHero = new Map<string, number>();
       for (const c of list) {
-        statsByHero.set(c.hero.id, deriveStats(c.hero, bundle.coefficients));
+        statsByHero.set(
+          c.hero.id,
+          deriveStats(c.hero.attribute_values, bundle.attributes, bundle.coefficients, bundle.stats),
+        );
         const total = c.deck.reduce(
           (s, e) => s + cardPower(e.card, e.effects, bundle.cardTiers, bundle.effectTypes),
           0,
@@ -101,7 +89,7 @@ export function RecalibrateAdmin() {
         deckPowerByHero.set(c.hero.id, total);
       }
       const out = recalibrate(
-        { statsByHero, deckPowerByHero, cells: sweep.cells },
+        { statsByHero, deckPowerByHero, cells: sweep.cells, stats: bundle.stats },
         bundle.statWeights,
       );
       setResult(out);
@@ -117,9 +105,11 @@ export function RecalibrateAdmin() {
     setApplying(true);
     setMsg(null);
     const updates = Object.entries(result.suggested_bp_weights)
-      .map(([stat, bp_weight]) => {
-        const existing = bundle.statWeights.find((s) => s.stat === stat);
-        if (!existing || bp_weight == null) return null;
+      .map(([slug, bp_weight]) => {
+        const stat = bundle.stats.find((s) => s.slug === slug);
+        if (!stat) return null;
+        const existing = bundle.statWeights.find((w) => w.stat_id === stat.id);
+        if (!existing) return null;
         return { ...existing, bp_weight };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -132,7 +122,7 @@ export function RecalibrateAdmin() {
 
     const { error } = await supabase
       .from('stat_weights')
-      .upsert(updates, { onConflict: 'env_id,stat' });
+      .upsert(updates, { onConflict: 'env_id,stat_id' });
     setApplying(false);
     if (error) {
       setMsg(error.message);
@@ -182,15 +172,16 @@ export function RecalibrateAdmin() {
         )}
       </Panel>
 
-      {result && (
+      {result && bundle && (
         <ResultDisplay
           result={result}
-          currentBpWeights={
-            bundle?.statWeights.reduce<Record<string, number>>((m, s) => {
-              m[s.stat] = s.bp_weight;
-              return m;
-            }, {}) ?? {}
-          }
+          currentBpBySlug={Object.fromEntries(
+            bundle.statWeights.map((w) => {
+              const stat = bundle.stats.find((s) => s.id === w.stat_id);
+              return [stat?.slug ?? '?', w.bp_weight];
+            }),
+          )}
+          statSlugs={bundle.stats.map((s) => s.slug)}
           onApply={onApply}
           applying={applying}
         />
@@ -201,28 +192,25 @@ export function RecalibrateAdmin() {
       <Panel title="How this works" className="mt-4">
         <div className="text-xs text-muted space-y-2">
           <p>
-            For each matchup in the sweep, we compute the stat differences
-            (HP, DMG, Evasion%, Resilience%, Range) and the deck power
-            difference between the two heroes. We then fit a linear model
-            that predicts (win_rate_a − 0.5) from those features.
+            For each matchup in the sweep, we compute the difference between
+            the two heroes for every stat in the env, plus the deck-power
+            difference. We then fit a linear model that predicts
+            (win_rate_a − 0.5) from those features.
           </p>
           <p>
-            The fitted coefficients tell you how sensitive win rate is to
-            each stat differential. Suggested <code>bp_weight</code> values
-            rescale the fitted coefficients so HP keeps its current weight
+            Suggested <code>bp_weight</code> values rescale the fitted
+            coefficients so the HP-role stat keeps its current weight
             (preserves your magnitude intuition); the others move
             proportionally.
           </p>
           <p>
             <strong>Mastery Score weights are never modified</strong> —
-            they're player-facing and GDD-locked. Only Balance Power
-            weights move.
+            they're player-facing and GDD-locked.
           </p>
           <p>
             R² near 1 means the fit explains most of the win-rate variance
             (good). Near 0 means win rate isn't well-explained by stats
-            alone (deck composition, card matchups, RNG dominate). Don't
-            apply suggestions blindly when R² is low.
+            alone. Don't apply suggestions blindly when R² is low.
           </p>
         </div>
       </Panel>
@@ -232,33 +220,21 @@ export function RecalibrateAdmin() {
 
 function ResultDisplay({
   result,
-  currentBpWeights,
+  currentBpBySlug,
+  statSlugs,
   onApply,
   applying,
 }: {
   result: RecalibrateResult;
-  currentBpWeights: Record<string, number>;
+  currentBpBySlug: Record<string, number>;
+  statSlugs: string[];
   onApply: () => void;
   applying: boolean;
 }) {
   const r2Tone =
     result.r_squared >= 0.7 ? 'good' : result.r_squared >= 0.4 ? 'warn' : 'bad';
 
-  const rows = useMemo(
-    () =>
-      FEATURE_KEYS.map((key) => {
-        const fitted = result.fitted[key];
-        const current = currentBpWeights[key];
-        const suggested =
-          key === 'deck_power'
-            ? null
-            : result.suggested_bp_weights[
-                key as 'hp' | 'dmg' | 'evasion_pct' | 'resilience_pct' | 'range'
-              ];
-        return { key, fitted, current, suggested };
-      }),
-    [result, currentBpWeights],
-  );
+  const featureKeys = useMemo(() => [...statSlugs, 'deck_power'], [statSlugs]);
 
   return (
     <Panel
@@ -281,22 +257,27 @@ function ResultDisplay({
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ key, fitted, current, suggested }) => (
-            <tr key={key} className="border-t border-line">
-              <td className="py-2 font-medium">
-                {key === 'deck_power' ? (
-                  <span className="text-cyan-400">deck (advisory)</span>
-                ) : (
-                  key
-                )}
-              </td>
-              <td className="py-2 text-right">{current ?? '—'}</td>
-              <td className="py-2 text-right text-muted">{fitted.toFixed(4)}</td>
-              <td className="py-2 text-right text-accent font-semibold">
-                {suggested ?? '—'}
-              </td>
-            </tr>
-          ))}
+          {featureKeys.map((key) => {
+            const fitted = result.fitted[key] ?? 0;
+            const current = key === 'deck_power' ? undefined : currentBpBySlug[key];
+            const suggested = key === 'deck_power' ? null : result.suggested_bp_weights[key];
+            return (
+              <tr key={key} className="border-t border-line">
+                <td className="py-2 font-medium">
+                  {key === 'deck_power' ? (
+                    <span className="text-cyan-400">deck (advisory)</span>
+                  ) : (
+                    key
+                  )}
+                </td>
+                <td className="py-2 text-right">{current ?? '—'}</td>
+                <td className="py-2 text-right text-muted">{fitted.toFixed(4)}</td>
+                <td className="py-2 text-right text-accent font-semibold">
+                  {suggested ?? '—'}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
