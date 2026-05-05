@@ -15,7 +15,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { useConfigBundle } from '@/lib/useConfigBundle';
-import { Badge, Button, Field, PageHeader, Panel } from '@/components/UI';
+import { Badge, Button, Field, Formula, HowCalculated, PageHeader, Panel } from '@/components/UI';
 import { batch, type BatchResult } from '@/lib/simulator';
 import { loadAllCombatants, type HeroFull } from '@/lib/load-combatants';
 
@@ -212,6 +212,25 @@ export function Sweep() {
                 navigate(`/simulator?a=${aId}&b=${bId}`)
               }
             />
+            <HowCalculated title="How are these win rates produced?">
+              <p>
+                Each cell runs the simulator <em>{runs}</em> times for that matchup,
+                then divides side-A wins by total runs. The heatmap colors reflect
+                distance from 50%.
+              </p>
+              <Formula>{`For each matchup (a, b):
+  for i in 1..N:
+    result_i = simulate(a, b, RNG)
+  win_rate_a = wins_a / N
+  verdict    = balanced if 45% ≤ win_rate_a ≤ 55%
+             | a_favored if > 55%
+             | b_favored if < 45%`}</Formula>
+              <p>
+                The simulator uses 0.5s ticks, asymmetric kiting (close 6/s, retreat 4/s),
+                and resolves damage via Evasion% rolls / control via Resilience% rolls.
+                Click any cell to drill into that matchup with 1000+ runs.
+              </p>
+            </HowCalculated>
           </Panel>
         </>
       )}

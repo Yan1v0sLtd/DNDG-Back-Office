@@ -10,8 +10,12 @@ import { CardEditor } from '@/pages/CardEditor';
 import { Simulator } from '@/pages/Simulator';
 import { Sweep } from '@/pages/Sweep';
 import { History } from '@/pages/History';
+import { HistoryCompare } from '@/pages/HistoryCompare';
+import { Formulas } from '@/pages/Formulas';
 import { CoefficientsAdmin } from '@/pages/admin/Coefficients';
 import { BudgetsAdmin } from '@/pages/admin/Budgets';
+import { CatalogAdmin } from '@/pages/admin/Catalog';
+import { RecalibrateAdmin } from '@/pages/admin/Recalibrate';
 
 export function App() {
   return (
@@ -30,8 +34,12 @@ export function App() {
                 <Route path="/simulator" element={<Simulator />} />
                 <Route path="/sweep" element={<Sweep />} />
                 <Route path="/history" element={<History />} />
+                <Route path="/history/compare" element={<HistoryCompare />} />
+                <Route path="/docs/formulas" element={<Formulas />} />
                 <Route path="/admin/coefficients" element={<CoefficientsAdmin />} />
                 <Route path="/admin/budgets" element={<BudgetsAdmin />} />
+                <Route path="/admin/catalog" element={<CatalogAdmin />} />
+                <Route path="/admin/recalibrate" element={<RecalibrateAdmin />} />
                 <Route path="*" element={<Navigate to="/heroes" replace />} />
               </Route>
             </Route>

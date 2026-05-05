@@ -13,12 +13,15 @@ import {
   Badge,
   Button,
   Field,
+  Formula,
+  HowCalculated,
   Input,
   NumberInput,
   PageHeader,
   Panel,
   Score,
 } from '@/components/UI';
+import { Link } from 'react-router-dom';
 import { DeckPanel } from '@/components/DeckPanel';
 import { evaluateBudget, findBudget, verdictLabel, verdictTone } from '@/lib/budget';
 import {
@@ -411,6 +414,25 @@ export function HeroEditor() {
             <div className="mt-2">
               <Badge tone={verdictTone(verdict)}>{verdictLabel(verdict)}</Badge>
             </div>
+            <HowCalculated>
+              <p>
+                <strong>Mastery Score</strong> (player-facing, GDD formula):
+              </p>
+              <Formula>{`MS = (HP × 2) + (DMG × 20)
+   + (Evasion% × 8) + (Resilience% × 5)
+Range is excluded by design.`}</Formula>
+              <p>
+                <strong>Balance Power</strong> (internal): same shape but uses{' '}
+                <code>bp_weight</code> instead of <code>ms_weight</code>, plus the
+                deck's total Card Power. Range carries real weight here.
+              </p>
+              <Formula>{`stat_BP = Σ stat × bp_weight[stat]
+Balance Power = stat_BP + Σ Card Power across deck`}</Formula>
+              <p>
+                Tunable in <Link to="/admin/coefficients" className="text-accent underline">Admin → Coefficients</Link>.
+                See <Link to="/docs/formulas" className="text-accent underline">/docs/formulas</Link> for the full reference.
+              </p>
+            </HowCalculated>
           </Panel>
 
           {deckContrib && deckCards.length > 0 && (

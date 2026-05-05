@@ -28,12 +28,19 @@ export function Layout() {
             <NavItem to="/simulator">Simulator</NavItem>
             <NavItem to="/sweep">Sweep</NavItem>
             <NavItem to="/history">History</NavItem>
+            <NavItem to="/history/compare">Compare</NavItem>
+          </Section>
+
+          <Section label="Reference">
+            <NavItem to="/docs/formulas">Formulas</NavItem>
           </Section>
 
           {canWriteConfig() && (
             <Section label="Admin">
               <NavItem to="/admin/coefficients">Coefficients</NavItem>
               <NavItem to="/admin/budgets">Budgets</NavItem>
+              <NavItem to="/admin/catalog">Catalog</NavItem>
+              <NavItem to="/admin/recalibrate">Recalibrate</NavItem>
             </Section>
           )}
         </nav>

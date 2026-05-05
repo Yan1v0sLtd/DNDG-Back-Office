@@ -5,10 +5,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { useConfigBundle } from '@/lib/useConfigBundle';
 import { cardPower, effectPower } from '@/lib/card-power-calculator';
+import { Link } from 'react-router-dom';
 import {
   Badge,
   Button,
   Field,
+  Formula,
+  HowCalculated,
   Input,
   NumberInput,
   PageHeader,
@@ -394,7 +397,7 @@ export function CardEditor() {
                 label="Card Power"
                 value={power ?? '—'}
                 emphasis="bp"
-                hint="Internal · feeds hero Balance Power in Phase 3"
+                hint="Internal · feeds hero Balance Power"
               />
               {tier && (
                 <Score
@@ -408,6 +411,24 @@ export function CardEditor() {
                 hint="10 / (cooldown_sec + 1)"
               />
             </div>
+            <HowCalculated>
+              <p>
+                Each effect contributes <code>pp_weight × magnitude × max(duration, 1) × target_count</code>;
+                effects sum, then the cooldown factor and tier multiplier scale the
+                result.
+              </p>
+              <Formula>{`effect_power = pp_weight × magnitude
+             × max(duration_sec, 1)
+             × target_count
+total        = Σ effect_power
+cooldown     = 10 / (cooldown_sec + 1)
+Card Power   = total × cooldown × tier_multiplier`}</Formula>
+              <p>
+                pp_weight per effect type lives in <Link to="/admin/catalog" className="text-accent underline">Admin → Catalog → Effect Types</Link>.
+                Tier multipliers in the same page under Card Tiers.
+                Full reference: <Link to="/docs/formulas" className="text-accent underline">/docs/formulas</Link>.
+              </p>
+            </HowCalculated>
           </Panel>
 
           {error && (

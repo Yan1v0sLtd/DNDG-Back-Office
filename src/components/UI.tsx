@@ -1,5 +1,6 @@
 // UI primitives. If you need a new one, add it here — don't scatter them.
 
+import { useState } from 'react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
 
 export function Button({
@@ -165,5 +166,46 @@ export function Empty({ children }: { children: ReactNode }) {
     <div className="text-center text-muted py-12 border border-dashed border-line rounded-lg">
       {children}
     </div>
+  );
+}
+
+/**
+ * Collapsed-by-default panel explaining how a score is calculated. Each
+ * page that surfaces a computed score wraps the explanation here so the
+ * UX is consistent.
+ */
+export function HowCalculated({
+  title = 'How is this calculated?',
+  children,
+}: {
+  title?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-ink/40 border border-line rounded-md mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted hover:text-slate-200 transition"
+      >
+        <span>{title}</span>
+        <span>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-1 text-xs text-slate-300 space-y-2 leading-relaxed">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Formatted formula block, monospace + accent. */
+export function Formula({ children }: { children: ReactNode }) {
+  return (
+    <pre className="bg-panel border border-line rounded px-3 py-2 text-[11px] text-accent font-mono whitespace-pre-wrap">
+      {children}
+    </pre>
   );
 }

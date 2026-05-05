@@ -25,7 +25,8 @@ When asked to add a feature, ask first: *can this be expressed as a coefficient 
 | 5 | Pairwise simulator (v1: no positioning / no multi-target / no storage) | ✅ Done |
 | 5b | Closing-distance positioning model + NxN sweep heatmap | ✅ Done |
 | 5c | Asymmetric kiting + run history (saved sweep + pairwise results) | ✅ Done |
-| 5d | BP recalibration from win-rate data (logistic regression on sweep results); AoE multi-target | ⏳ Next |
+| 5d | BP recalibration (linear regression on saved sweeps), history compare, catalog admin (tiers/effects/roles), inline formula descriptions + /docs/formulas | ✅ Done |
+| 6  | AoE multi-target proper handling; haste-as-movement; user/role admin UI; tests | ⏳ Future |
 
 Don't start Phase 4 until ≥5 heroes with full decks are in dev. Don't start Phase 5 until ≥10. Without that, budget ranges and matchup expectations are uncalibrated.
 
@@ -61,6 +62,7 @@ src/
 │   ├── card-power-calculator.ts    → Card internal score from effects, cooldown, tier.
 │   ├── budget.ts                   → Budget verdict (ok/too_low/too_high/no_budget) + tone helper.
 │   ├── simulator.ts                → Phase 5: pairwise combat sim (tick loop, AI, effects, batch).
+│   ├── recalibrate.ts              → Phase 5d: linear regression on sweep cells → suggested bp_weights.
 │   ├── load-combatants.ts          → Phase 5b: shared loader (one or all heroes) returning HeroFull.
 │   ├── useConfigBundle.ts          → Hook: fetches all config for current env. Pages use this.
 │   └── supabase.ts                 → Client only. No queries here.
@@ -81,9 +83,13 @@ src/
 │   ├── Simulator.tsx               → Phase 5: pick A vs B, run N Monte Carlo, see win-rate verdict.
 │   ├── Sweep.tsx                   → Phase 5b: NxN heatmap, click cell → /simulator with pair selected.
 │   ├── History.tsx                 → Phase 5c: list saved runs (pairwise + sweep), expand to detail.
+│   ├── HistoryCompare.tsx          → Phase 5d: pick two sweeps, render delta heatmap.
+│   ├── Formulas.tsx                → Phase 5d: canonical reference for every score in the system.
 │   └── admin/
 │       ├── Coefficients.tsx        → Admin-only: edit attribute coefficients + stat weights.
-│       └── Budgets.tsx              → Admin-only: BP envelope per (role × rank). Filter-by-role.
+│       ├── Budgets.tsx             → Admin-only: BP envelope per (role × rank). Filter-by-role.
+│       ├── Catalog.tsx             → Admin-only: edit card_tiers, effect_types, combat_roles.
+│       └── Recalibrate.tsx         → Admin-only: fit bp_weights to a saved sweep, apply suggestions.
 └── types/database.ts               → Domain types matching the Supabase schema. Keep in sync with migrations.
 ```
 
