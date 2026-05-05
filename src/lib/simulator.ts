@@ -3,23 +3,24 @@
 // PURE FUNCTIONS. No React, no Supabase, no I/O. Callers pass in fully-
 // resolved hero data (stats + deck cards + effects) and get back a result.
 //
-// V2 — positioning model (Phase 5b):
-//   • Combatants start at distance = max(rangeA, rangeB). Whoever has the
-//     longer range gets a free firing window before the other can engage.
-//   • Both combatants close at CLOSING_SPEED grid/sec each tick (no kiting
-//     in v1 — once melee, both stay engaged). Realistic enough; designers
-//     get a clear range advantage signal without infinite-kite degenerate
-//     dynamics.
-//   • Attacks (basic + enemy-targeting cards) gated by attacker.range >=
-//     current_distance. Self-targeted cards (heal, shield, buffs) ignore
-//     range. DoTs already in flight keep ticking regardless.
+// V3 — positioning + asymmetric kiting (Phase 5c):
+//   • Combatants start at distance = max(rangeA, rangeB).
+//   • Each tick, each combatant moves intentionally:
+//       - higher-range hero wants to maintain self.range (kite at max)
+//       - lower-range hero wants 0 (close to melee)
+//       - equal range: both want 0
+//   • Asymmetric speeds: closing = CLOSE_SPEED (6 grid/s), retreating
+//     = RETREAT_SPEED (4 grid/s). The kiting penalty means a lower-range
+//     hero can eventually catch a kiter — ranged gets first-strike but
+//     not infinite kite.
+//   • Attacks gated by attacker.range >= current_distance. Self-targeted
+//     cards (heal, shield, buffs) ignore range. DoTs in flight keep ticking.
 //
 // Still NOT modeled (intentional, documented in CLAUDE.md):
-//   • Kiting / asymmetric speeds. Both close at the same rate.
+//   • Multi-target: target_count > 1 collapses to 1 in 1v1. AoE cards
+//     under-perform here — useful signal, not a bug to mask.
 //   • Haste's effect on movement speed (GDD soft-launch hint).
-//   • Multi-target: target_count > 1 collapses to 1 (no second target in
-//     1v1). AoE cards under-perform here — useful signal.
-//   • Knockback, slow-as-positioning, LOS, terrain.
+//   • Knockback, slow-as-positioning, LOS, terrain, stamina.
 //
 // Combat model:
 //   • 0.5s tick; 30s max battle.
@@ -84,7 +85,11 @@ interface State {
 const TICK_SEC = 0.5;
 const MAX_SEC = 30;
 const BASIC_ATTACK_CD = 1.0;
-const CLOSING_SPEED = 6; // grid units per second (each combatant moves)
+// Asymmetric kiting: closing is faster than retreating, so a kiter is
+// eventually caught. Without this asymmetry equal-speed closing/retreating
+// would create infinite-kite stalemates.
+const CLOSE_SPEED = 6; // grid/sec when moving toward opponent
+const RETREAT_SPEED = 4; // grid/sec when moving away (kiting)
 
 export function simulate(
   a: CombatantInput,
@@ -123,8 +128,12 @@ export function simulate(
       break;
     }
 
-    // ─ phase 4: close distance (each combatant moves toward the other)
-    distance = Math.max(0, distance - 2 * CLOSING_SPEED * TICK_SEC);
+    // ─ phase 4: each combatant moves toward their preferred distance
+    const aPref = preferredDistance(a.derived.range, b.derived.range);
+    const bPref = preferredDistance(b.derived.range, a.derived.range);
+    const aDelta = moveDelta(distance, aPref); // grid/sec; +retreat, -close
+    const bDelta = moveDelta(distance, bPref);
+    distance = Math.max(0, distance + (aDelta + bDelta) * TICK_SEC);
 
     // ─ phase 5: each combatant acts (if not stunned)
     const orderRoll = rng();
@@ -206,6 +215,20 @@ export function batch(
 }
 
 // ─── Internals ──────────────────────────────────────────────────────────────
+
+function preferredDistance(selfRange: number, oppRange: number): number {
+  // Higher-range one wants their max range (kite); lower one wants melee.
+  // Equal range: both want 0 (closes fast).
+  return selfRange > oppRange ? selfRange : 0;
+}
+
+function moveDelta(currentDistance: number, prefDistance: number): number {
+  // This combatant's contribution to distance change per second.
+  // Positive = wants distance to grow (retreating); negative = closing.
+  if (currentDistance < prefDistance) return RETREAT_SPEED;
+  if (currentDistance > prefDistance) return -CLOSE_SPEED;
+  return 0;
+}
 
 function newState(c: CombatantInput): State {
   return {

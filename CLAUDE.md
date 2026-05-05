@@ -24,7 +24,8 @@ When asked to add a feature, ask first: *can this be expressed as a coefficient 
 | 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ✅ Done |
 | 5 | Pairwise simulator (v1: no positioning / no multi-target / no storage) | ✅ Done |
 | 5b | Closing-distance positioning model + NxN sweep heatmap | ✅ Done |
-| 5c | Kiting / asymmetric speeds, run history, BP recalibration from win-rate data, AoE multi-target handling | ⏳ Future |
+| 5c | Asymmetric kiting + run history (saved sweep + pairwise results) | ✅ Done |
+| 5d | BP recalibration from win-rate data (logistic regression on sweep results); AoE multi-target | ⏳ Next |
 
 Don't start Phase 4 until ≥5 heroes with full decks are in dev. Don't start Phase 5 until ≥10. Without that, budget ranges and matchup expectations are uncalibrated.
 
@@ -79,6 +80,7 @@ src/
 │   ├── CardEditor.tsx              → Live Card Power recompute; effects sub-editor (add/edit/remove).
 │   ├── Simulator.tsx               → Phase 5: pick A vs B, run N Monte Carlo, see win-rate verdict.
 │   ├── Sweep.tsx                   → Phase 5b: NxN heatmap, click cell → /simulator with pair selected.
+│   ├── History.tsx                 → Phase 5c: list saved runs (pairwise + sweep), expand to detail.
 │   └── admin/
 │       ├── Coefficients.tsx        → Admin-only: edit attribute coefficients + stat weights.
 │       └── Budgets.tsx              → Admin-only: BP envelope per (role × rank). Filter-by-role.
@@ -139,25 +141,26 @@ basic attack, and resolves effects with evasion / resilience rolls.
 **Modeled:** HP/DMG/eva%/res%, cooldowns, DoTs, shields, heals, stuns,
 buffs (might/haste/resilience), evasion debuffs.
 
-**Now modeled (Phase 5b):**
-- **Positioning (closing-distance only)** — combatants start at
-  `max(rangeA, rangeB)` apart and close at 12 grid/sec relative speed
-  (each side moves 6/sec). Attacks gated by attacker.range ≥ distance.
-  Self-targeted cards (heal/shield/buffs) ignore range. DoTs already in
-  flight keep ticking regardless. No kiting yet — once melee, both stay.
+**Now modeled (Phase 5c):**
+- **Positioning + asymmetric kiting** — combatants start at
+  `max(rangeA, rangeB)` apart. Each tick, each picks a preferred distance:
+  the higher-range hero wants `self.range` (kite at max), the lower wants
+  0 (close to melee). Closing speed is 6 grid/sec, retreating is 4 grid/sec
+  — the kiting penalty means a closer eventually catches a kiter. Attacks
+  gated by attacker.range ≥ distance.
+- **Run history** — `simulation_runs` table persists pairwise + sweep
+  results with snapshots; `/history` lists and re-renders them.
 
 **Still NOT modeled:**
-- **Kiting / asymmetric speeds** — both close at the same rate. Once they
-  meet, they stay melee. Real PvP has kiting but modeling it without
-  degenerate infinite-range scenarios needs stamina or map edges.
 - **Multi-target** — `target_count > 1` collapses to 1 (no second target
   exists in 1v1). AoE cards therefore appear under-powered, which is
   itself a useful signal — don't "fix" it by inflating their pp_weight.
-- **Knockback, slow-as-positioning, LOS, terrain** — silent no-ops
-  (resilience still rolls for slow/eva-debuff so designers see the effect
-  on resilience scoring).
-- **Run storage** — results are page-only. Add a `simulations` table when
-  designers need history.
+  A real fix would be a multi-enemy abstraction (3v3 dummies); deferred
+  to Phase 5d.
+- **Haste's effect on movement speed** — GDD soft-launch hint; not yet wired.
+- **Knockback, slow-as-positioning, LOS, terrain, stamina** — silent no-ops.
+- **BP recalibration** — Phase 5d. Sweep results aren't yet folded back
+  into bp_weight / pp_weight tuning.
 
 Verdict: 45–55% win rate = "balanced". Anything outside flips the verdict.
 

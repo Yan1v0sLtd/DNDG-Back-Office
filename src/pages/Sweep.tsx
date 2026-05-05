@@ -11,6 +11,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { useConfigBundle } from '@/lib/useConfigBundle';
 import { Badge, Button, Field, PageHeader, Panel } from '@/components/UI';
@@ -24,6 +26,7 @@ interface CellResult {
 
 export function Sweep() {
   const { currentEnv } = useEnvironment();
+  const { user, canWriteContent } = useAuth();
   const { bundle, loading: cfgLoading } = useConfigBundle(currentEnv?.id ?? null);
   const navigate = useNavigate();
 
@@ -35,6 +38,8 @@ export function Sweep() {
   // Map<"aId|bId", CellResult>
   const [cells, setCells] = useState<Map<string, CellResult>>(new Map());
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentEnv || !bundle) return;
@@ -61,6 +66,7 @@ export function Sweep() {
     setRunning(true);
     setError(null);
     setCells(new Map());
+    setSavedAt(null);
 
     const total = combatants.length * (combatants.length - 1);
     setProgress({ done: 0, total });
@@ -92,6 +98,32 @@ export function Sweep() {
     setRunning(false);
   };
 
+  const onSave = async () => {
+    if (!cells.size || !currentEnv || !user) return;
+    setSaving(true);
+    setError(null);
+    // Serialize the Map into a plain object for jsonb storage.
+    const cellsObj: Record<string, BatchResult> = {};
+    cells.forEach((v, k) => {
+      cellsObj[k] = v.result;
+    });
+    const { error: saveErr } = await supabase.from('simulation_runs').insert({
+      env_id: currentEnv.id,
+      kind: 'sweep',
+      hero_a_id: null,
+      hero_b_id: null,
+      runs_per_matchup: runs,
+      result: { cells: cellsObj, hero_ids: combatants.map((c) => c.hero.id) },
+      created_by: user.id,
+    });
+    setSaving(false);
+    if (saveErr) {
+      setError(saveErr.message);
+      return;
+    }
+    setSavedAt(new Date().toISOString());
+  };
+
   const summary = useMemo(() => {
     if (cells.size === 0) return null;
     let balanced = 0, aFav = 0, bFav = 0;
@@ -111,14 +143,21 @@ export function Sweep() {
         title="Balance Sweep"
         subtitle={`${currentEnv.name} environment · run every published hero against every other`}
         actions={
-          <Button
-            onClick={onRun}
-            disabled={running || loading || combatants.length < 2 || !bundle}
-          >
-            {running
-              ? `Running… ${progress.done}/${progress.total}`
-              : `Run sweep (${combatants.length}×${combatants.length - 1})`}
-          </Button>
+          <>
+            {cells.size > 0 && canWriteContent() && (
+              <Button variant="ghost" onClick={onSave} disabled={saving || !!savedAt || running}>
+                {saving ? 'Saving…' : savedAt ? '✓ Saved' : 'Save sweep'}
+              </Button>
+            )}
+            <Button
+              onClick={onRun}
+              disabled={running || loading || combatants.length < 2 || !bundle}
+            >
+              {running
+                ? `Running… ${progress.done}/${progress.total}`
+                : `Run sweep (${combatants.length}×${combatants.length - 1})`}
+            </Button>
+          </>
         }
       />
 

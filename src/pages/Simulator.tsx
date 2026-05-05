@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { useConfigBundle } from '@/lib/useConfigBundle';
 import { Badge, Button, Field, PageHeader, Panel, Score } from '@/components/UI';
@@ -18,6 +19,7 @@ import type { Hero } from '@/types/database';
 
 export function Simulator() {
   const { currentEnv } = useEnvironment();
+  const { user, canWriteContent } = useAuth();
   const { bundle, loading: cfgLoading } = useConfigBundle(currentEnv?.id ?? null);
   const [heroes, setHeroes] = useState<Hero[]>([]);
   const [params, setParams] = useSearchParams();
@@ -27,6 +29,8 @@ export function Simulator() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   // Cached full data for whichever hero is selected on each side.
   const [aFull, setAFull] = useState<HeroFull | null>(null);
@@ -76,6 +80,7 @@ export function Simulator() {
     setRunning(true);
     setError(null);
     setResult(null);
+    setSavedAt(null);
     // yield to the browser so the spinner paints, then compute.
     await new Promise((r) => setTimeout(r, 16));
     try {
@@ -88,6 +93,27 @@ export function Simulator() {
     }
   };
 
+  const onSave = async () => {
+    if (!result || !currentEnv || !user || !aFull || !bFull) return;
+    setSaving(true);
+    setError(null);
+    const { error: saveErr } = await supabase.from('simulation_runs').insert({
+      env_id: currentEnv.id,
+      kind: 'pairwise',
+      hero_a_id: aFull.hero.id,
+      hero_b_id: bFull.hero.id,
+      runs_per_matchup: result.runs,
+      result,
+      created_by: user.id,
+    });
+    setSaving(false);
+    if (saveErr) {
+      setError(saveErr.message);
+      return;
+    }
+    setSavedAt(new Date().toISOString());
+  };
+
   if (!currentEnv) return null;
 
   return (
@@ -96,9 +122,16 @@ export function Simulator() {
         title="Simulator"
         subtitle={`${currentEnv.name} environment · pairwise hero+deck Monte Carlo (${runs} runs)`}
         actions={
-          <Button onClick={onRun} disabled={!ready}>
-            {running ? 'Running…' : 'Run'}
-          </Button>
+          <>
+            {result && canWriteContent() && (
+              <Button variant="ghost" onClick={onSave} disabled={saving || !!savedAt}>
+                {saving ? 'Saving…' : savedAt ? '✓ Saved' : 'Save run'}
+              </Button>
+            )}
+            <Button onClick={onRun} disabled={!ready}>
+              {running ? 'Running…' : 'Run'}
+            </Button>
+          </>
         }
       />
 
@@ -151,10 +184,10 @@ export function Simulator() {
             </select>
           </Field>
           <div className="col-span-2 text-xs text-muted">
-            Positioning: combatants start at max(rangeA, rangeB) apart and close at 6 grid/sec each.
-            Attacks gated by attacker.range ≥ distance. No kiting yet (once melee, both stay engaged).
-            target_count &gt; 1 collapses to 1 in 1v1 — AoE cards under-perform here, which is signal,
-            not bug.
+            Positioning: combatants start at max(rangeA, rangeB) apart. Higher-range hero kites at
+            their max range; lower-range chases. Closing 6/s, retreating 4/s — kiting buys time
+            but a closer eventually catches up. target_count &gt; 1 collapses to 1 in 1v1 — AoE
+            cards under-perform here, which is signal, not bug.
           </div>
         </div>
       </Panel>

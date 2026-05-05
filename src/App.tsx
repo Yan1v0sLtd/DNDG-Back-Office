@@ -9,6 +9,7 @@ import { CardsList } from '@/pages/CardsList';
 import { CardEditor } from '@/pages/CardEditor';
 import { Simulator } from '@/pages/Simulator';
 import { Sweep } from '@/pages/Sweep';
+import { History } from '@/pages/History';
 import { CoefficientsAdmin } from '@/pages/admin/Coefficients';
 import { BudgetsAdmin } from '@/pages/admin/Budgets';
 
@@ -28,6 +29,7 @@ export function App() {
                 <Route path="/cards/:id" element={<CardEditor />} />
                 <Route path="/simulator" element={<Simulator />} />
                 <Route path="/sweep" element={<Sweep />} />
+                <Route path="/history" element={<History />} />
                 <Route path="/admin/coefficients" element={<CoefficientsAdmin />} />
                 <Route path="/admin/budgets" element={<BudgetsAdmin />} />
                 <Route path="*" element={<Navigate to="/heroes" replace />} />

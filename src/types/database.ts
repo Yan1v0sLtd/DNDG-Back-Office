@@ -162,3 +162,21 @@ export interface BalanceBudget {
 }
 
 export type BudgetVerdict = 'no_budget' | 'too_low' | 'too_high' | 'ok';
+
+// ─── Phase 5c — Simulation runs ────────────────────────────────────────────
+
+export type SimulationKind = 'pairwise' | 'sweep';
+
+export interface SimulationRun {
+  id: string;
+  env_id: string;
+  kind: SimulationKind;
+  hero_a_id: string | null;
+  hero_b_id: string | null;
+  runs_per_matchup: number;
+  /** For pairwise: BatchResult shape. For sweep: { cells: Record<key, BatchResult>; hero_ids: string[] }. */
+  result: unknown;
+  notes: string | null;
+  created_at: string;
+  created_by: string | null;
+}
