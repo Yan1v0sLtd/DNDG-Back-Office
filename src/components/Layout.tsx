@@ -26,6 +26,7 @@ export function Layout() {
 
           <Section label="Balance">
             <NavItem to="/simulator">Simulator</NavItem>
+            <NavItem to="/sweep">Sweep</NavItem>
           </Section>
 
           {canWriteConfig() && (

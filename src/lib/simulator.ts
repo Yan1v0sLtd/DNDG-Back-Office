@@ -3,12 +3,23 @@
 // PURE FUNCTIONS. No React, no Supabase, no I/O. Callers pass in fully-
 // resolved hero data (stats + deck cards + effects) and get back a result.
 //
-// V1 limitations (intentional, documented in CLAUDE.md):
-//   • No positioning. Range stat is ignored — every fight is in melee range.
-//     Ranged heroes will under-perform here vs their real-PvP value.
-//   • No multi-target. target_count > 1 collapses to 1 (no second target
-//     exists in 1v1). AoE cards therefore look weaker — useful signal.
-//   • No movement / no kiting / no LOS.
+// V2 — positioning model (Phase 5b):
+//   • Combatants start at distance = max(rangeA, rangeB). Whoever has the
+//     longer range gets a free firing window before the other can engage.
+//   • Both combatants close at CLOSING_SPEED grid/sec each tick (no kiting
+//     in v1 — once melee, both stay engaged). Realistic enough; designers
+//     get a clear range advantage signal without infinite-kite degenerate
+//     dynamics.
+//   • Attacks (basic + enemy-targeting cards) gated by attacker.range >=
+//     current_distance. Self-targeted cards (heal, shield, buffs) ignore
+//     range. DoTs already in flight keep ticking regardless.
+//
+// Still NOT modeled (intentional, documented in CLAUDE.md):
+//   • Kiting / asymmetric speeds. Both close at the same rate.
+//   • Haste's effect on movement speed (GDD soft-launch hint).
+//   • Multi-target: target_count > 1 collapses to 1 (no second target in
+//     1v1). AoE cards under-perform here — useful signal.
+//   • Knockback, slow-as-positioning, LOS, terrain.
 //
 // Combat model:
 //   • 0.5s tick; 30s max battle.
@@ -30,6 +41,7 @@ export interface CombatantInput {
     dmg: number;
     evasion_pct: number;
     resilience_pct: number;
+    range: number;
   };
   deck: { card: Card; effects: CardEffect[] }[];
 }
@@ -72,6 +84,7 @@ interface State {
 const TICK_SEC = 0.5;
 const MAX_SEC = 30;
 const BASIC_ATTACK_CD = 1.0;
+const CLOSING_SPEED = 6; // grid units per second (each combatant moves)
 
 export function simulate(
   a: CombatantInput,
@@ -86,13 +99,18 @@ export function simulate(
   let ttk = MAX_SEC;
   let dead: 'a' | 'b' | null = null;
 
+  // Positioning. Higher-range hero starts at full kiting distance; both
+  // close at CLOSING_SPEED. Distance closes regardless of stun (you don't
+  // stop walking when stunned by your friend; also keeps the model simple).
+  let distance = Math.max(a.derived.range, b.derived.range);
+
   for (let t = 0; t < MAX_SEC; t = round(t + TICK_SEC)) {
     // ─ phase 1: decay cooldowns + tick down stuns
     decay(sa);
     decay(sb);
 
-    // ─ phase 2: apply DoTs
-    dmg_a_to_b += applyDots(sb); // a's dots ticking on b live in b.dots
+    // ─ phase 2: apply DoTs (range-independent — already in flight)
+    dmg_a_to_b += applyDots(sb);
     dmg_b_to_a += applyDots(sa);
 
     // ─ phase 3: prune expired buffs (recomputes effective stats from base)
@@ -105,12 +123,15 @@ export function simulate(
       break;
     }
 
-    // ─ phase 4: each combatant acts (if not stunned)
+    // ─ phase 4: close distance (each combatant moves toward the other)
+    distance = Math.max(0, distance - 2 * CLOSING_SPEED * TICK_SEC);
+
+    // ─ phase 5: each combatant acts (if not stunned)
     const orderRoll = rng();
     const first: 'a' | 'b' = orderRoll < 0.5 ? 'a' : 'b';
     const second = first === 'a' ? 'b' : 'a';
 
-    const dmgFirst = act(first === 'a' ? a : b, first === 'a' ? sa : sb, first === 'a' ? sb : sa, effectTypes, rng);
+    const dmgFirst = act(first === 'a' ? a : b, first === 'a' ? sa : sb, first === 'a' ? sb : sa, effectTypes, rng, distance);
     if (first === 'a') dmg_a_to_b += dmgFirst;
     else dmg_b_to_a += dmgFirst;
 
@@ -120,7 +141,7 @@ export function simulate(
       break;
     }
 
-    const dmgSecond = act(second === 'a' ? a : b, second === 'a' ? sa : sb, second === 'a' ? sb : sa, effectTypes, rng);
+    const dmgSecond = act(second === 'a' ? a : b, second === 'a' ? sa : sb, second === 'a' ? sb : sa, effectTypes, rng, distance);
     if (second === 'a') dmg_a_to_b += dmgSecond;
     else dmg_b_to_a += dmgSecond;
 
@@ -242,14 +263,16 @@ function act(
   opp: State,
   effectTypes: EffectType[],
   rng: () => number,
+  distance: number,
 ): number {
   if (self.stun_remaining > 0) return 0;
 
-  const card = pickCard(base, self, opp, effectTypes);
+  const card = pickCard(base, self, opp, effectTypes, base.derived.range, distance);
   if (card) {
     return playCard(card.card, card.effects, self, opp, effectTypes, rng);
   }
-  if (self.basic_attack_cd <= 0) {
+  // Basic attack — only if in range. Otherwise idle this tick.
+  if (self.basic_attack_cd <= 0 && base.derived.range >= distance) {
     self.basic_attack_cd = BASIC_ATTACK_CD;
     return resolveDamage(self.dmg, self, opp, rng);
   }
@@ -261,15 +284,18 @@ function pickCard(
   self: State,
   opp: State,
   effectTypes: EffectType[],
+  range: number,
+  distance: number,
 ): CombatantInput['deck'][number] | null {
-  // Among off-cooldown cards, pick the one with highest static power that's
-  // applicable in the current state (rough heuristic).
+  // Among off-cooldown cards that are applicable AND in range (if they
+  // target the enemy), pick the one with highest static power.
   let best: CombatantInput['deck'][number] | null = null;
   let bestPower = 0;
   for (const entry of base.deck) {
     const cd = self.card_cd.get(entry.card.id) ?? 0;
     if (cd > 0) continue;
     if (!applicable(entry, self, opp, effectTypes)) continue;
+    if (targetsEnemy(entry.effects) && range < distance) continue;
     const p = staticCardPower(entry.card, entry.effects, effectTypes);
     if (p > bestPower) {
       best = entry;
@@ -277,6 +303,12 @@ function pickCard(
     }
   }
   return best;
+}
+
+function targetsEnemy(effects: CardEffect[]): boolean {
+  return effects.some(
+    (e) => e.target_type === 'enemy' || e.target_type === 'aoe_enemy',
+  );
 }
 
 function applicable(

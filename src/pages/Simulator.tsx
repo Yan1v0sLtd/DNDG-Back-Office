@@ -7,31 +7,22 @@
 // to a Web Worker).
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useEnvironment } from '@/contexts/EnvironmentContext';
 import { useConfigBundle } from '@/lib/useConfigBundle';
-import { deriveStats } from '@/lib/ms-calculator';
 import { Badge, Button, Field, PageHeader, Panel, Score } from '@/components/UI';
 import { batch, type BatchResult } from '@/lib/simulator';
-import type {
-  Card,
-  CardEffect,
-  Hero,
-  HeroDeckEntry,
-} from '@/types/database';
-
-interface HeroFull {
-  hero: Hero;
-  derived: { hp: number; dmg: number; evasion_pct: number; resilience_pct: number };
-  deck: { card: Card; effects: CardEffect[] }[];
-}
+import { loadCombatant, type HeroFull } from '@/lib/load-combatants';
+import type { Hero } from '@/types/database';
 
 export function Simulator() {
   const { currentEnv } = useEnvironment();
   const { bundle, loading: cfgLoading } = useConfigBundle(currentEnv?.id ?? null);
   const [heroes, setHeroes] = useState<Hero[]>([]);
-  const [aId, setAId] = useState<string>('');
-  const [bId, setBId] = useState<string>('');
+  const [params, setParams] = useSearchParams();
+  const [aId, setAId] = useState<string>(params.get('a') ?? '');
+  const [bId, setBId] = useState<string>(params.get('b') ?? '');
   const [runs, setRuns] = useState(1000);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BatchResult | null>(null);
@@ -62,12 +53,21 @@ export function Simulator() {
   // When a hero is picked, load deck + cards + effects to build CombatantInput.
   useEffect(() => {
     if (!aId || !bundle) return;
-    loadFull(aId, bundle).then(setAFull).catch((e) => setError(String(e)));
+    loadCombatant(aId, bundle).then(setAFull).catch((e) => setError(String(e)));
   }, [aId, bundle]);
   useEffect(() => {
     if (!bId || !bundle) return;
-    loadFull(bId, bundle).then(setBFull).catch((e) => setError(String(e)));
+    loadCombatant(bId, bundle).then(setBFull).catch((e) => setError(String(e)));
   }, [bId, bundle]);
+
+  // Sync ?a=&b= so deep links / sweep cell-clicks work.
+  useEffect(() => {
+    const next = new URLSearchParams(params);
+    if (aId) next.set('a', aId); else next.delete('a');
+    if (bId) next.set('b', bId); else next.delete('b');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aId, bId]);
 
   const ready = aFull && bFull && bundle && !running && aId !== bId && aId && bId;
 
@@ -151,8 +151,10 @@ export function Simulator() {
             </select>
           </Field>
           <div className="col-span-2 text-xs text-muted">
-            v1 limitations: no positioning (Range stat ignored, all fights in melee),
-            no multi-target, no movement. Ranged heroes will under-perform vs real PvP.
+            Positioning: combatants start at max(rangeA, rangeB) apart and close at 6 grid/sec each.
+            Attacks gated by attacker.range ≥ distance. No kiting yet (once melee, both stay engaged).
+            target_count &gt; 1 collapses to 1 in 1v1 — AoE cards under-perform here, which is signal,
+            not bug.
           </div>
         </div>
       </Panel>
@@ -294,56 +296,5 @@ function ResultPanel({
       </div>
     </Panel>
   );
-}
-
-// ─── Data loading ───────────────────────────────────────────────────────────
-
-async function loadFull(
-  heroId: string,
-  bundle: ReturnType<typeof useConfigBundle>['bundle'],
-): Promise<HeroFull> {
-  if (!bundle) throw new Error('config not loaded');
-  const [heroRes, deckRes] = await Promise.all([
-    supabase.from('heroes').select('*').eq('id', heroId).single(),
-    supabase.from('hero_decks').select('*').eq('hero_id', heroId).order('slot'),
-  ]);
-  if (heroRes.error || !heroRes.data) throw new Error(heroRes.error?.message ?? 'hero not found');
-  const deck = (deckRes.data ?? []) as HeroDeckEntry[];
-  const cardIds = deck.map((d) => d.card_id);
-  const { data: cardRows } =
-    cardIds.length > 0
-      ? await supabase.from('cards').select('*').in('id', cardIds)
-      : { data: [] as Card[] };
-  const { data: effRows } =
-    cardIds.length > 0
-      ? await supabase.from('card_effects').select('*').in('card_id', cardIds)
-      : { data: [] as CardEffect[] };
-
-  const cardsById = new Map<string, Card>();
-  ((cardRows ?? []) as Card[]).forEach((c) => cardsById.set(c.id, c));
-  const effsByCard = new Map<string, CardEffect[]>();
-  ((effRows ?? []) as CardEffect[]).forEach((e) => {
-    const arr = effsByCard.get(e.card_id) ?? [];
-    arr.push(e);
-    effsByCard.set(e.card_id, arr);
-  });
-
-  const hero = heroRes.data as Hero;
-  const stats = deriveStats(hero, bundle.coefficients);
-  return {
-    hero,
-    derived: {
-      hp: stats.hp,
-      dmg: stats.dmg,
-      evasion_pct: stats.evasion_pct,
-      resilience_pct: stats.resilience_pct,
-    },
-    deck: deck
-      .map((d) => ({
-        card: cardsById.get(d.card_id),
-        effects: effsByCard.get(d.card_id) ?? [],
-      }))
-      .filter((x): x is { card: Card; effects: CardEffect[] } => Boolean(x.card)),
-  };
 }
 

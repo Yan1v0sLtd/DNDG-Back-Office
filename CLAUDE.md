@@ -23,7 +23,8 @@ When asked to add a feature, ask first: *can this be expressed as a coefficient 
 | 3 | Deck builder (5 role + 5 general) + hero Balance Power aggregation including deck | ✅ Done |
 | 4 | Balance budgets per (combat_role × mastery_rank) + violation flags | ✅ Done |
 | 5 | Pairwise simulator (v1: no positioning / no multi-target / no storage) | ✅ Done |
-| 5b | Simulator polish: positioning model, AoE handling, run history, batch sweep, BP recalibration from win-rate data | ⏳ Next |
+| 5b | Closing-distance positioning model + NxN sweep heatmap | ✅ Done |
+| 5c | Kiting / asymmetric speeds, run history, BP recalibration from win-rate data, AoE multi-target handling | ⏳ Future |
 
 Don't start Phase 4 until ≥5 heroes with full decks are in dev. Don't start Phase 5 until ≥10. Without that, budget ranges and matchup expectations are uncalibrated.
 
@@ -59,6 +60,7 @@ src/
 │   ├── card-power-calculator.ts    → Card internal score from effects, cooldown, tier.
 │   ├── budget.ts                   → Budget verdict (ok/too_low/too_high/no_budget) + tone helper.
 │   ├── simulator.ts                → Phase 5: pairwise combat sim (tick loop, AI, effects, batch).
+│   ├── load-combatants.ts          → Phase 5b: shared loader (one or all heroes) returning HeroFull.
 │   ├── useConfigBundle.ts          → Hook: fetches all config for current env. Pages use this.
 │   └── supabase.ts                 → Client only. No queries here.
 ├── contexts/
@@ -76,6 +78,7 @@ src/
 │   ├── CardsList.tsx
 │   ├── CardEditor.tsx              → Live Card Power recompute; effects sub-editor (add/edit/remove).
 │   ├── Simulator.tsx               → Phase 5: pick A vs B, run N Monte Carlo, see win-rate verdict.
+│   ├── Sweep.tsx                   → Phase 5b: NxN heatmap, click cell → /simulator with pair selected.
 │   └── admin/
 │       ├── Coefficients.tsx        → Admin-only: edit attribute coefficients + stat weights.
 │       └── Budgets.tsx              → Admin-only: BP envelope per (role × rank). Filter-by-role.
@@ -136,14 +139,21 @@ basic attack, and resolves effects with evasion / resilience rolls.
 **Modeled:** HP/DMG/eva%/res%, cooldowns, DoTs, shields, heals, stuns,
 buffs (might/haste/resilience), evasion debuffs.
 
-**Not modeled in v1 (intentional, ship v1 first):**
-- **Positioning** — Range stat is ignored. Every fight is in melee. Ranged
-  heroes (Anaitis, Tayfan) will look weaker here than in real PvP. Add a
-  closing-distance model in v2.
+**Now modeled (Phase 5b):**
+- **Positioning (closing-distance only)** — combatants start at
+  `max(rangeA, rangeB)` apart and close at 12 grid/sec relative speed
+  (each side moves 6/sec). Attacks gated by attacker.range ≥ distance.
+  Self-targeted cards (heal/shield/buffs) ignore range. DoTs already in
+  flight keep ticking regardless. No kiting yet — once melee, both stay.
+
+**Still NOT modeled:**
+- **Kiting / asymmetric speeds** — both close at the same rate. Once they
+  meet, they stay melee. Real PvP has kiting but modeling it without
+  degenerate infinite-range scenarios needs stamina or map edges.
 - **Multi-target** — `target_count > 1` collapses to 1 (no second target
   exists in 1v1). AoE cards therefore appear under-powered, which is
   itself a useful signal — don't "fix" it by inflating their pp_weight.
-- **Movement, kiting, line-of-sight, knockback, slow** — all silent no-ops
+- **Knockback, slow-as-positioning, LOS, terrain** — silent no-ops
   (resilience still rolls for slow/eva-debuff so designers see the effect
   on resilience scoring).
 - **Run storage** — results are page-only. Add a `simulations` table when
