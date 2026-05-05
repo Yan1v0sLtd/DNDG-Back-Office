@@ -32,7 +32,7 @@ export function Sweep() {
 
   const [combatants, setCombatants] = useState<HeroFull[]>([]);
   const [loading, setLoading] = useState(true);
-  const [runs, setRuns] = useState(200);
+  const [runs, setRuns] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   // Map<"aId|bId", CellResult>
@@ -40,6 +40,13 @@ export function Sweep() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (runs == null && bundle?.simulatorConfig) {
+      setRuns(bundle.simulatorConfig.default_sweep_runs);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.simulatorConfig?.default_sweep_runs]);
 
   useEffect(() => {
     if (!currentEnv || !bundle) return;
@@ -62,7 +69,7 @@ export function Sweep() {
   }, [currentEnv?.id, bundle]);
 
   const onRun = async () => {
-    if (!bundle) return;
+    if (!bundle || !runs) return;
     setRunning(true);
     setError(null);
     setCells(new Map());
@@ -79,7 +86,7 @@ export function Sweep() {
         // yield to the browser so progress paints
         await new Promise((r) => setTimeout(r, 0));
         try {
-          const r = batch(a, b, bundle.effectTypes, runs);
+          const r = batch(a, b, bundle.effectTypes, runs!, Math.random, bundle.simulatorConfig);
           next.set(`${a.hero.id}|${b.hero.id}`, { result: r });
         } catch (e) {
           setError(String(e));
@@ -176,18 +183,18 @@ export function Sweep() {
               <Field label="Runs per matchup">
                 <select
                   className="w-full bg-ink border border-line rounded-md px-3 py-2 text-sm"
-                  value={runs}
+                  value={runs ?? ''}
                   onChange={(e) => setRuns(parseInt(e.target.value, 10))}
                   disabled={running}
                 >
                   <option value={50}>50 (very fast)</option>
-                  <option value={200}>200 (default)</option>
+                  <option value={200}>200</option>
                   <option value={1000}>1000 (slow but stable)</option>
                 </select>
               </Field>
               <div className="col-span-2 text-xs text-muted">
                 {combatants.length}×{combatants.length - 1} = {combatants.length * (combatants.length - 1)} matchups ·
-                {' '}{combatants.length * (combatants.length - 1) * runs} sims total.
+                {' '}{combatants.length * (combatants.length - 1) * (runs ?? 0)} sims total.
                 Heatmap rows = side A; columns = side B; cells = side A win rate.
                 Click any cell to drill into that matchup.
               </div>

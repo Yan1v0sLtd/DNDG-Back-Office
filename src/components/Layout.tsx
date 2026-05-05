@@ -40,6 +40,7 @@ export function Layout() {
               <NavItem to="/admin/coefficients">Coefficients</NavItem>
               <NavItem to="/admin/budgets">Budgets</NavItem>
               <NavItem to="/admin/catalog">Catalog</NavItem>
+              <NavItem to="/admin/simulator">Simulator</NavItem>
               <NavItem to="/admin/recalibrate">Recalibrate</NavItem>
             </Section>
           )}

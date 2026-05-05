@@ -11,8 +11,10 @@ import type {
   CombatRole,
   EffectType,
   MasteryRank,
+  SimulatorConfig,
   StatWeight,
 } from '@/types/database';
+import { SIMULATOR_CONFIG_DEFAULTS } from '@/types/database';
 
 export interface ConfigBundle {
   coefficients: AttributeCoefficient[];
@@ -22,6 +24,7 @@ export interface ConfigBundle {
   cardTiers: CardTier[];
   effectTypes: EffectType[];
   balanceBudgets: BalanceBudget[];
+  simulatorConfig: SimulatorConfig;
 }
 
 interface State {
@@ -43,7 +46,7 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
     setState((s) => ({ ...s, loading: true, error: null }));
 
     (async () => {
-      const [coef, sw, roles, ranks, tiers, effectTypes, budgets] = await Promise.all([
+      const [coef, sw, roles, ranks, tiers, effectTypes, budgets, simCfg] = await Promise.all([
         supabase.from('attribute_coefficients').select('*').eq('env_id', envId),
         supabase.from('stat_weights').select('*').eq('env_id', envId),
         supabase.from('combat_roles').select('*').eq('env_id', envId).order('display_name'),
@@ -51,6 +54,7 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
         supabase.from('card_tiers').select('*').eq('env_id', envId).order('position'),
         supabase.from('effect_types').select('*').eq('env_id', envId).order('display_name'),
         supabase.from('balance_budgets').select('*').eq('env_id', envId),
+        supabase.from('simulator_config').select('*').eq('env_id', envId).maybeSingle(),
       ]);
       if (cancelled) return;
 
@@ -62,7 +66,13 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
         tiers.error?.message ||
         effectTypes.error?.message ||
         budgets.error?.message ||
+        simCfg.error?.message ||
         null;
+
+      const simulatorConfig: SimulatorConfig = (simCfg.data as SimulatorConfig) ?? {
+        env_id: envId,
+        ...SIMULATOR_CONFIG_DEFAULTS,
+      };
 
       setState({
         bundle: err
@@ -75,6 +85,7 @@ export function useConfigBundle(envId: string | null): State & { reload: () => v
               cardTiers: (tiers.data ?? []) as CardTier[],
               effectTypes: (effectTypes.data ?? []) as EffectType[],
               balanceBudgets: (budgets.data ?? []) as BalanceBudget[],
+              simulatorConfig,
             },
         loading: false,
         error: err,

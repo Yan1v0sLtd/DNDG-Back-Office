@@ -31,7 +31,14 @@
 //   • Damage rolls vs target evasion%. Control rolls vs target resilience%.
 //   • Win = opponent HP ≤ 0; otherwise on timeout, higher HP% wins, tied = draw.
 
-import type { Card, CardEffect, EffectType, Hero } from '@/types/database';
+import type {
+  Card,
+  CardEffect,
+  EffectType,
+  Hero,
+  SimulatorConfig,
+} from '@/types/database';
+import { SIMULATOR_CONFIG_DEFAULTS } from '@/types/database';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -82,41 +89,36 @@ interface State {
 
 // ─── Engine ────────────────────────────────────────────────────────────────
 
-const TICK_SEC = 0.5;
-const MAX_SEC = 30;
-const BASIC_ATTACK_CD = 1.0;
-// Asymmetric kiting: closing is faster than retreating, so a kiter is
-// eventually caught. Without this asymmetry equal-speed closing/retreating
-// would create infinite-kite stalemates.
-const CLOSE_SPEED = 6; // grid/sec when moving toward opponent
-const RETREAT_SPEED = 4; // grid/sec when moving away (kiting)
+// Default config — every public function accepts an optional override so
+// admins tuning simulator_config in the DB take effect immediately.
+const DEFAULTS = SIMULATOR_CONFIG_DEFAULTS;
 
 export function simulate(
   a: CombatantInput,
   b: CombatantInput,
   effectTypes: EffectType[],
   rng: () => number = Math.random,
+  config: Partial<SimulatorConfig> = {},
 ): SimResult {
+  const cfg = { ...DEFAULTS, ...config };
   const sa = newState(a);
   const sb = newState(b);
   let dmg_a_to_b = 0;
   let dmg_b_to_a = 0;
-  let ttk = MAX_SEC;
+  let ttk = cfg.max_battle_sec;
   let dead: 'a' | 'b' | null = null;
 
-  // Positioning. Higher-range hero starts at full kiting distance; both
-  // close at CLOSING_SPEED. Distance closes regardless of stun (you don't
-  // stop walking when stunned by your friend; also keeps the model simple).
+  // Positioning. Higher-range hero starts at full kiting distance.
   let distance = Math.max(a.derived.range, b.derived.range);
 
-  for (let t = 0; t < MAX_SEC; t = round(t + TICK_SEC)) {
+  for (let t = 0; t < cfg.max_battle_sec; t = round(t + cfg.tick_sec)) {
     // ─ phase 1: decay cooldowns + tick down stuns
-    decay(sa);
-    decay(sb);
+    decay(sa, cfg.tick_sec);
+    decay(sb, cfg.tick_sec);
 
     // ─ phase 2: apply DoTs (range-independent — already in flight)
-    dmg_a_to_b += applyDots(sb);
-    dmg_b_to_a += applyDots(sa);
+    dmg_a_to_b += applyDots(sb, cfg.tick_sec);
+    dmg_b_to_a += applyDots(sa, cfg.tick_sec);
 
     // ─ phase 3: prune expired buffs (recomputes effective stats from base)
     pruneBuffs(sa, a);
@@ -131,16 +133,16 @@ export function simulate(
     // ─ phase 4: each combatant moves toward their preferred distance
     const aPref = preferredDistance(a.derived.range, b.derived.range);
     const bPref = preferredDistance(b.derived.range, a.derived.range);
-    const aDelta = moveDelta(distance, aPref); // grid/sec; +retreat, -close
-    const bDelta = moveDelta(distance, bPref);
-    distance = Math.max(0, distance + (aDelta + bDelta) * TICK_SEC);
+    const aDelta = moveDelta(distance, aPref, cfg);
+    const bDelta = moveDelta(distance, bPref, cfg);
+    distance = Math.max(0, distance + (aDelta + bDelta) * cfg.tick_sec);
 
     // ─ phase 5: each combatant acts (if not stunned)
     const orderRoll = rng();
     const first: 'a' | 'b' = orderRoll < 0.5 ? 'a' : 'b';
     const second = first === 'a' ? 'b' : 'a';
 
-    const dmgFirst = act(first === 'a' ? a : b, first === 'a' ? sa : sb, first === 'a' ? sb : sa, effectTypes, rng, distance);
+    const dmgFirst = act(first === 'a' ? a : b, first === 'a' ? sa : sb, first === 'a' ? sb : sa, effectTypes, rng, distance, cfg);
     if (first === 'a') dmg_a_to_b += dmgFirst;
     else dmg_b_to_a += dmgFirst;
 
@@ -150,7 +152,7 @@ export function simulate(
       break;
     }
 
-    const dmgSecond = act(second === 'a' ? a : b, second === 'a' ? sa : sb, second === 'a' ? sb : sa, effectTypes, rng, distance);
+    const dmgSecond = act(second === 'a' ? a : b, second === 'a' ? sa : sb, second === 'a' ? sb : sa, effectTypes, rng, distance, cfg);
     if (second === 'a') dmg_a_to_b += dmgSecond;
     else dmg_b_to_a += dmgSecond;
 
@@ -185,10 +187,12 @@ export function batch(
   effectTypes: EffectType[],
   runs: number,
   rng: () => number = Math.random,
+  config: Partial<SimulatorConfig> = {},
 ): BatchResult {
+  const cfg = { ...DEFAULTS, ...config };
   let wa = 0, wb = 0, wd = 0, ttk = 0, da = 0, db = 0;
   for (let i = 0; i < runs; i++) {
-    const r = simulate(a, b, effectTypes, rng);
+    const r = simulate(a, b, effectTypes, rng, cfg);
     if (r.winner === 'a') wa++;
     else if (r.winner === 'b') wb++;
     else wd++;
@@ -200,8 +204,8 @@ export function batch(
   const win_rate_b = wb / runs;
   const draw_rate = wd / runs;
   let verdict: BatchResult['verdict'] = 'balanced';
-  if (win_rate_a < 0.45) verdict = 'b_favored';
-  else if (win_rate_a > 0.55) verdict = 'a_favored';
+  if (win_rate_a < cfg.verdict_band_min) verdict = 'b_favored';
+  else if (win_rate_a > cfg.verdict_band_max) verdict = 'a_favored';
   return {
     runs,
     win_rate_a,
@@ -222,11 +226,15 @@ function preferredDistance(selfRange: number, oppRange: number): number {
   return selfRange > oppRange ? selfRange : 0;
 }
 
-function moveDelta(currentDistance: number, prefDistance: number): number {
+function moveDelta(
+  currentDistance: number,
+  prefDistance: number,
+  cfg: { close_speed: number; retreat_speed: number },
+): number {
   // This combatant's contribution to distance change per second.
   // Positive = wants distance to grow (retreating); negative = closing.
-  if (currentDistance < prefDistance) return RETREAT_SPEED;
-  if (currentDistance > prefDistance) return -CLOSE_SPEED;
+  if (currentDistance < prefDistance) return cfg.retreat_speed;
+  if (currentDistance > prefDistance) return -cfg.close_speed;
   return 0;
 }
 
@@ -246,20 +254,20 @@ function newState(c: CombatantInput): State {
   };
 }
 
-function decay(s: State) {
-  s.basic_attack_cd = Math.max(0, s.basic_attack_cd - TICK_SEC);
-  s.stun_remaining = Math.max(0, s.stun_remaining - TICK_SEC);
-  for (const [k, v] of s.card_cd) s.card_cd.set(k, Math.max(0, v - TICK_SEC));
-  for (const d of s.dots) d.remaining = Math.max(0, d.remaining - TICK_SEC);
-  for (const b of s.buffs) b.remaining = Math.max(0, b.remaining - TICK_SEC);
+function decay(s: State, tick_sec: number) {
+  s.basic_attack_cd = Math.max(0, s.basic_attack_cd - tick_sec);
+  s.stun_remaining = Math.max(0, s.stun_remaining - tick_sec);
+  for (const [k, v] of s.card_cd) s.card_cd.set(k, Math.max(0, v - tick_sec));
+  for (const d of s.dots) d.remaining = Math.max(0, d.remaining - tick_sec);
+  for (const b of s.buffs) b.remaining = Math.max(0, b.remaining - tick_sec);
 }
 
 // Tick DoTs on this state. Returns total damage dealt this tick.
-function applyDots(s: State): number {
+function applyDots(s: State, tick_sec: number): number {
   let dealt = 0;
   for (const d of s.dots) {
     if (d.remaining <= 0) continue;
-    const dmg = d.dmg_per_sec * TICK_SEC;
+    const dmg = d.dmg_per_sec * tick_sec;
     dealt += applyDamage(s, dmg);
   }
   s.dots = s.dots.filter((d) => d.remaining > 0);
@@ -287,16 +295,17 @@ function act(
   effectTypes: EffectType[],
   rng: () => number,
   distance: number,
+  cfg: { basic_attack_cd: number; tick_sec: number },
 ): number {
   if (self.stun_remaining > 0) return 0;
 
   const card = pickCard(base, self, opp, effectTypes, base.derived.range, distance);
   if (card) {
-    return playCard(card.card, card.effects, self, opp, effectTypes, rng);
+    return playCard(card.card, card.effects, self, opp, effectTypes, rng, cfg);
   }
   // Basic attack — only if in range. Otherwise idle this tick.
   if (self.basic_attack_cd <= 0 && base.derived.range >= distance) {
-    self.basic_attack_cd = BASIC_ATTACK_CD;
+    self.basic_attack_cd = cfg.basic_attack_cd;
     return resolveDamage(self.dmg, self, opp, rng);
   }
   return 0;
@@ -376,6 +385,7 @@ function playCard(
   opp: State,
   effectTypes: EffectType[],
   rng: () => number,
+  cfg: { tick_sec: number },
 ): number {
   self.card_cd.set(card.id, card.cooldown_sec);
   let dealt = 0;
@@ -391,7 +401,7 @@ function playCard(
         if (target === opp) {
           target.dots.push({
             dmg_per_sec: e.magnitude,
-            remaining: Math.max(e.duration_sec, TICK_SEC),
+            remaining: Math.max(e.duration_sec, cfg.tick_sec),
           });
         }
         break;

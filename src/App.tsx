@@ -16,6 +16,7 @@ import { CoefficientsAdmin } from '@/pages/admin/Coefficients';
 import { BudgetsAdmin } from '@/pages/admin/Budgets';
 import { CatalogAdmin } from '@/pages/admin/Catalog';
 import { RecalibrateAdmin } from '@/pages/admin/Recalibrate';
+import { SimulatorAdmin } from '@/pages/admin/Simulator';
 
 export function App() {
   return (
@@ -40,6 +41,7 @@ export function App() {
                 <Route path="/admin/budgets" element={<BudgetsAdmin />} />
                 <Route path="/admin/catalog" element={<CatalogAdmin />} />
                 <Route path="/admin/recalibrate" element={<RecalibrateAdmin />} />
+                <Route path="/admin/simulator" element={<SimulatorAdmin />} />
                 <Route path="*" element={<Navigate to="/heroes" replace />} />
               </Route>
             </Route>

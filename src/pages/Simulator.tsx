@@ -25,7 +25,7 @@ export function Simulator() {
   const [params, setParams] = useSearchParams();
   const [aId, setAId] = useState<string>(params.get('a') ?? '');
   const [bId, setBId] = useState<string>(params.get('b') ?? '');
-  const [runs, setRuns] = useState(1000);
+  const [runs, setRuns] = useState<number | null>(null); // initialized from config below
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +64,14 @@ export function Simulator() {
     loadCombatant(bId, bundle).then(setBFull).catch((e) => setError(String(e)));
   }, [bId, bundle]);
 
+  // Pick up the env's default pairwise run count once config loads.
+  useEffect(() => {
+    if (runs == null && bundle?.simulatorConfig) {
+      setRuns(bundle.simulatorConfig.default_pairwise_runs);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.simulatorConfig?.default_pairwise_runs]);
+
   // Sync ?a=&b= so deep links / sweep cell-clicks work.
   useEffect(() => {
     const next = new URLSearchParams(params);
@@ -73,10 +81,10 @@ export function Simulator() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aId, bId]);
 
-  const ready = aFull && bFull && bundle && !running && aId !== bId && aId && bId;
+  const ready = aFull && bFull && bundle && !running && aId !== bId && aId && bId && runs;
 
   const onRun = async () => {
-    if (!ready || !bundle) return;
+    if (!ready || !bundle || !runs) return;
     setRunning(true);
     setError(null);
     setResult(null);
@@ -84,7 +92,7 @@ export function Simulator() {
     // yield to the browser so the spinner paints, then compute.
     await new Promise((r) => setTimeout(r, 16));
     try {
-      const r = batch(aFull!, bFull!, bundle.effectTypes, runs);
+      const r = batch(aFull!, bFull!, bundle.effectTypes, runs, Math.random, bundle.simulatorConfig);
       setResult(r);
     } catch (e) {
       setError(String(e));
@@ -120,7 +128,7 @@ export function Simulator() {
     <>
       <PageHeader
         title="Simulator"
-        subtitle={`${currentEnv.name} environment · pairwise hero+deck Monte Carlo (${runs} runs)`}
+        subtitle={`${currentEnv.name} environment · pairwise hero+deck Monte Carlo (${runs ?? '…'} runs)`}
         actions={
           <>
             {result && canWriteContent() && (
@@ -171,7 +179,7 @@ export function Simulator() {
           <Field label="Runs">
             <select
               className="w-full bg-ink border border-line rounded-md px-3 py-2 text-sm"
-              value={runs}
+              value={runs ?? ''}
               onChange={(e) => {
                 setRuns(parseInt(e.target.value, 10));
                 setResult(null);
@@ -179,7 +187,7 @@ export function Simulator() {
               disabled={running}
             >
               <option value={100}>100 (fast)</option>
-              <option value={1000}>1000 (default)</option>
+              <option value={1000}>1000</option>
               <option value={5000}>5000 (slow but stable)</option>
             </select>
           </Field>

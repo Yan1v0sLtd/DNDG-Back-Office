@@ -167,6 +167,33 @@ export type BudgetVerdict = 'no_budget' | 'too_low' | 'too_high' | 'ok';
 
 export type SimulationKind = 'pairwise' | 'sweep';
 
+// ─── Tier 1 flexibility — Simulator config ─────────────────────────────────
+
+export interface SimulatorConfig {
+  env_id: string;
+  tick_sec: number;
+  max_battle_sec: number;
+  basic_attack_cd: number;
+  close_speed: number;
+  retreat_speed: number;
+  verdict_band_min: number;
+  verdict_band_max: number;
+  default_pairwise_runs: number;
+  default_sweep_runs: number;
+}
+
+export const SIMULATOR_CONFIG_DEFAULTS: Omit<SimulatorConfig, 'env_id'> = {
+  tick_sec: 0.5,
+  max_battle_sec: 30,
+  basic_attack_cd: 1.0,
+  close_speed: 6,
+  retreat_speed: 4,
+  verdict_band_min: 0.45,
+  verdict_band_max: 0.55,
+  default_pairwise_runs: 1000,
+  default_sweep_runs: 200,
+};
+
 export interface SimulationRun {
   id: string;
   env_id: string;
